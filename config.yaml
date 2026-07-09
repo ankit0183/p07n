@@ -1,0 +1,891 @@
+# CtbCap Multi-Configuration for your models
+# Save as config.yaml
+
+global:
+  save_path: "./ctbcap_rec"
+  log_path: "./ctbcap_rec/log"
+  save_space_mib: 512
+  log_space_mib: 16
+  cut_time: 0
+  cut_size_mib: 0
+  platform: "stripchat"
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  edging_mode: false
+  debug_mode: true
+  ignore_proxy: false
+  check_interval: 60
+  retry_interval: 60
+  ffmpeg_codec: "copy"
+  ffmpeg_extra_args: ""
+
+  notifications:
+    enabled: false
+    telegram:
+      enabled: false
+      bot_token: ""
+      chat_id: ""
+    discord:
+      enabled: false
+      webhook_url: ""
+    ntfy:
+      enabled: false
+      topic: ""
+      server: "https://ntfy.sh"
+
+  metadata:
+    enabled: true
+    log_path: "./ctbcap_rec/log/metadata.jsonl"
+
+  health_check:
+    enabled: true
+    port: 8080
+
+models:
+  - name: "Ada-19"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/Ada-19"
+    log_path: "./ctbcap_rec/log/Ada-19"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "Priyanka011"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/Priyanka011"
+    log_path: "./ctbcap_rec/log/Priyanka011"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "Meav_"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/Meav_"
+    log_path: "./ctbcap_rec/log/Meav_"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "soin18"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/soin18"
+    log_path: "./ctbcap_rec/log/soin18"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "yoga_session"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/yoga_session"
+    log_path: "./ctbcap_rec/log/yoga_session"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 3600
+
+  - name: "Minakshi-Gi"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/Minakshi-Gi"
+    log_path: "./ctbcap_rec/log/Minakshi-Gi"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "xoxoashi"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/xoxoashi"
+    log_path: "./ctbcap_rec/log/xoxoashi"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180 
+    cut_time: 0
+  
+  - name: "Swetie_Priyaaaaa"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/Swetie_Priyaaaaa"
+    log_path: "./ctbcap_rec/log/Swetie_Priyaaaaa"
+    enabled: true
+    check_interval: 60
+    retry_interval: 60
+    cut_time: 0
+  
+  - name: "DaizyDanny"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/DaizyDanny"
+    log_path: "./ctbcap_rec/log/DaizyDanny"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "ekta_767"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/ekta_767"
+    log_path: "./ctbcap_rec/log/ekta_767"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "test_model_new"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/test_model_new"
+    log_path: "./ctbcap_rec/log/test_model_new"
+    enabled: true
+    check_interval: 60
+    retry_interval: 60
+    cut_time: 0
+
+  - name: "hy_selahh"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/hy_selahh"
+    log_path: "./ctbcap_rec/log/hy_selahh"
+    enabled: true
+    check_interval: 60
+    retry_interval: 60
+    cut_time: 0
+
+  - name: "iliyana-20"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/iliyana-20"
+    log_path: "./ctbcap_rec/log/iliyana-20"
+    enabled: true
+    check_interval: 60
+    retry_interval: 60
+    cut_time: 0
+
+  - name: "cuty_petite"
+    platform: "chaturbate"
+    save_path: "./ctbcap_rec/cuty_petite"
+    log_path: "./ctbcap_rec/log/cuty_petite"
+    enabled: true
+    check_interval: 60
+    retry_interval: 60
+    cut_time: 0
+
+  - name: "_magic_kis"
+    platform: "chaturbate"
+    save_path: "./ctbcap_rec/_magic_kis"
+    log_path: "./ctbcap_rec/log/_magic_kis"
+    enabled: true
+    check_interval: 60
+    retry_interval: 60
+    cut_time: 0
+
+  - name: "luxeaura"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/luxeaura"
+    log_path: "./ctbcap_rec/log/luxeaura"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "hot-jerry"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/hot-jerry"
+    log_path: "./ctbcap_rec/log/hot-jerry"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "sweety_cpl-"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/sweety_cpl-"
+    log_path: "./ctbcap_rec/log/sweety_cpl-"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+    
+  - name: "Naina_PG"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/Naina_PG"
+    log_path: "./ctbcap_rec/log/Naina_PG"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "syuri_sun"
+    platform: "chaturbate"
+    save_path: "./ctbcap_rec/syuri_sun"
+    log_path: "./ctbcap_rec/log/syuri_sun"
+    enabled: true
+    check_interval: 60
+    retry_interval: 60
+    cut_time: 0
+    
+  - name: "Virgin_Aisha"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/ Virgin_Aisha"
+    log_path: "./ctbcap_rec/log/ Virgin_Aisha"
+    enabled: true
+    check_interval: 60
+    retry_interval: 60
+    cut_time: 0
+   
+  - name: "your_molly_mark"
+    platform: "chaturbate"
+    save_path: "./ctbcap_rec/your_molly_mark"
+    log_path: "./ctbcap_rec/log/your_molly_mark"
+    enabled: true
+    check_interval: 60
+    retry_interval: 60
+    cut_time: 0
+
+  - name: "Sikha_Abhi"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/Sikha_Abhi"
+    log_path: "./ctbcap_rec/log/Sikha_Abhi"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0 
+
+  - name: "sexynaina3"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/sexynaina3"
+    log_path: "./ctbcap_rec/log/sexynaina3"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0 
+
+  - name: "Misty_09"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/Misty_09"
+    log_path: "./ctbcap_rec/log/Misty_09"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0 
+  
+  - name: "Simran_kaurr"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/Simran_kaurr"
+    log_path: "./ctbcap_rec/log/Simran_kaurr"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+  
+  - name: "your-zoya"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/your-zoya"
+    log_path: "./ctbcap_rec/log/your-zoya"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "Hot-kavya"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Hot-kavya"
+    log_path: "./ctbcap_rec/log/Hot-kavya"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+  
+  - name : "Desi-Rani_"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Desi-Rani_"
+    log_path: "./ctbcap_rec/log/Desi-Rani_"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "xoxoashi"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/xoxoashi"
+    log_path: "./ctbcap_rec/log/xoxoashi"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "indiangeni20"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/indiangeni20"
+    log_path: "./ctbcap_rec/log/indiangeni20"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "zaanbi"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/zaanbi"
+    log_path: "./ctbcap_rec/log/zaanbi"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "Disha_22_"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Disha_22_"
+    log_path: "./ctbcap_rec/log/Disha_22_"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "latina_nikita"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/latina_nikita"
+    log_path: "./ctbcap_rec/log/latina_nikita"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "young_couple76"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/young_couple76"
+    log_path: "./ctbcap_rec/log/young_couple76"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "Aarti_misty71"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Aarti_misty71"
+    log_path: "./ctbcap_rec/log/Aarti_misty71"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "babycharu"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/babycharu"
+    log_path: "./ctbcap_rec/log/babycharu"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "Radhika__gori"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Radhika__gori"
+    log_path: "./ctbcap_rec/log/Radhika__gori"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "hot-siyaa"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/hot-siyaa"
+    log_path: "./ctbcap_rec/log/hot-siyaa"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "lovelyshaski"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/lovelyshaski"
+    log_path: "./ctbcap_rec/log/lovelyshaski"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+  
+  - name : "Maggie_748"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Maggie_748"
+    log_path: "./ctbcap_rec/log/Maggie_748"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "couple_swwet"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/couple_swwet"
+    log_path: "./ctbcap_rec/log/couple_swwet"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "lusty_alisha"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/lusty_alisha"
+    log_path: "./ctbcap_rec/log/lusty_alisha"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "princess_rinku"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/princess_rinku"
+    log_path: "./ctbcap_rec/log/princess_rinku"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "hot_PallaviX"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/hot_PallaviX"
+    log_path: "./ctbcap_rec/log/hot_PallaviX"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "your-zoya"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/your-zoya"
+    log_path: "./ctbcap_rec/log/your-zoya"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "hot-couple-0"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/hot-couple-0"
+    log_path: "./ctbcap_rec/log/hot-couple-0"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "KatyaCherryy"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/KatyaCherryy"
+    log_path: "./ctbcap_rec/log/KatyaCherryy"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "lololowka_"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/lololowka_"
+    log_path: "./ctbcap_rec/log/lololowka_"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "LustyRosee"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/LustyRosee"
+    log_path: "./ctbcap_rec/log/LustyRosee"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "lovelyshaski"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/lovelyshaski"
+    log_path: "./ctbcap_rec/log/lovelyshaski"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "cherry_lotion"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/cherry_lotion"
+    log_path: "./ctbcap_rec/log/cherry_lotion"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "Naira_fit"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Naira_fit"
+    log_path: "./ctbcap_rec/log/Naira_fit"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "ViviRichard"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/ViviRichard"
+    log_path: "./ctbcap_rec/log/ViviRichard"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+  
+  - name : "EveryoneEverywhere"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/EveryoneEverywhere"
+    log_path: "./ctbcap_rec/log/EveryoneEverywhere"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+  
+  - name : "PearleKalmen"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/PearleKalmen"
+    log_path: "./ctbcap_rec/log/PearleKalmen"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "ElmiraDabato"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/ElmiraDabato"
+    log_path: "./ctbcap_rec/log/ElmiraDabato"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "EstelaSuppa"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/EstelaSuppa"
+    log_path: "./ctbcap_rec/log/EstelaSuppa"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+  
+  - name : "LavenderMitten"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/LavenderMitten"
+    log_path: "./ctbcap_rec/log/LavenderMitten"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "GlaydsLeveto"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/GlaydsLeveto"
+    log_path: "./ctbcap_rec/log/GlaydsLeveto"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+  
+  - name : "LustyRosee"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/LustyRosee"
+    log_path: "./ctbcap_rec/log/LustyRosee"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+  
+  - name : "CarolannMirjah"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/CarolannMirjah"
+    log_path: "./ctbcap_rec/log/CarolannMirjah"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "SophieBelll"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/SophieBelll"
+    log_path: "./ctbcap_rec/log/SophieBelll"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "simmisweet"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/simmisweet"
+    log_path: "./ctbcap_rec/log/simmisweet"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "dallass_and_vegas"
+    platform : "chatubate"
+    save_path: "./ctbcap_rec/dallass_and_vegas"
+    log_path: "./ctbcap_rec/log/dallass_and_vegas"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "minimollyq"
+    platform : "chatubate"
+    save_path: "./ctbcap_rec/minimollyq"
+    log_path: "./ctbcap_rec/log/minimollyq"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "celinaimmel"
+    platform : "chatubate"
+    save_path: "./ctbcap_rec/celinaimmel"
+    log_path: "./ctbcap_rec/log/celinaimmel"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "lunaysebastian-"
+    platform : "chatubate"
+    save_path: "./ctbcap_rec/lunaysebastian-"
+    log_path: "./ctbcap_rec/log/lunaysebastian-"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "raveneusbiter"
+    platform : "chatubate"
+    save_path: "./ctbcap_rec/raveneusbiter"
+    log_path: "./ctbcap_rec/log/raveneusbiter"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "cute_dipti"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/cute_dipti"
+    log_path: "./ctbcap_rec/log/cute_dipti"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "Shaniya03"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Shaniya03"
+    log_path: "./ctbcap_rec/log/Shaniya03"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "luvishika"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/luvishika"
+    log_path: "./ctbcap_rec/log/luvishika"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "Hot_Deepansi02"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Hot_Deepansi02"
+    log_path: "./ctbcap_rec/log/Hot_Deepansi02"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0 
+
+  - name : "JasminKitany"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/JasminKitany"
+    log_path: "./ctbcap_rec/log/JasminKitany"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "foxy_bloomm"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/foxy_bloomm"
+    log_path: "./ctbcap_rec/log/foxy_bloomm"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "RochelTrewhitt"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/RochelTrewhitt"
+    log_path: "./ctbcap_rec/log/RochelTrewhitt"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "4u4Love"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/4u4Love"
+    log_path: "./ctbcap_rec/log/4u4Love"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "thesensual_dollsss"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/thesensual_dollsss"
+    log_path: "./ctbcap_rec/log/thesensual_dollsss"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "JennyDilly"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/JennyDilly"
+    log_path: "./ctbcap_rec/log/JennyDilly"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "nancy_chancy"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/nancy_chancy"
+    log_path: "./ctbcap_rec/log/nancy_chancy"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "chelsea_bridget"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/chelsea_bridget"
+    log_path: "./ctbcap_rec/log/chelsea_bridget"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "GiovannaLopez"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/GiovannaLopez"
+    log_path: "./ctbcap_rec/log/GiovannaLopez"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "Rinkey-Love"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Rinkey-Love"
+    log_path: "./ctbcap_rec/log/Rinkey-Love"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+  
+  - name : "thegirls_girls"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/thegirls_girls"
+    log_path: "./ctbcap_rec/log/thegirls_girls"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0 
+
+  - name : "Meilin_lin"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Meilin_lin"
+    log_path: "./ctbcap_rec/log/Meilin_lin"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "Beedream"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Beedream"
+    log_path: "./ctbcap_rec/log/Beedream"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "batmancatwoman17"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/batmancatwoman17"
+    log_path: "./ctbcap_rec/log/batmancatwoman17"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "AvanYa_1"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/AvanYa_1"
+    log_path: "./ctbcap_rec/log/AvanYa_1"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "isha_sax"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/isha_sax"
+    log_path: "./ctbcap_rec/log/isha_sax"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "misshermione2"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/misshermione2"
+    log_path: "./ctbcap_rec/log/misshermione2"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "its-ira"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/its-ira"
+    log_path: "./ctbcap_rec/log/its-ira"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "brandaburns"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/brandaburns"
+    log_path: "./ctbcap_rec/log/brandaburns"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "hii-tanisa"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/hii-tanisa"
+    log_path: "./ctbcap_rec/log/hii-tanisa"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "ivy_the_goddess"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/ivy_the_goddess"
+    log_path: "./ctbcap_rec/log/ivy_the_goddess"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+    
