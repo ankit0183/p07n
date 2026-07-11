@@ -951,6 +951,16 @@ models:
     retry_interval: 60
     cut_time: 0
 
+    
+  - name : "akrti_rao"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/akrti_rao"
+    log_path: "./ctbcap_rec/log/akrti_rao"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
   
 
   
