@@ -925,6 +925,15 @@ models:
     retry_interval: 60
     cut_time: 0
 
+  - name : "pooja_riya"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/pooja_riya"
+    log_path: "./ctbcap_rec/log/pooja_riya"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
   
 
   
