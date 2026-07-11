@@ -897,4 +897,26 @@ models:
     retry_interval: 60
     cut_time: 0
 
+  - name : "cutenikkibaby"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/cutenikkibaby"
+    log_path: "./ctbcap_rec/log/cutenikkibaby"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  - name : "kiya_7"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/kiya_7"
+    log_path: "./ctbcap_rec/log/kiya_7"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
+  
+
+  
+
     
