@@ -944,6 +944,16 @@ models:
     retry_interval: 180
     cut_time: 0
 
+    
+    - name : "Sexy-_eva"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Sexy-_eva"
+    log_path: "./ctbcap_rec/log/Sexy-_eva"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
   
 
   
