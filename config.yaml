@@ -619,7 +619,7 @@ models:
     cut_time: 0
 
   - name : "dallass_and_vegas"
-    platform : "chatubate"
+    platform : "chaturbate"
     save_path: "./ctbcap_rec/dallass_and_vegas"
     log_path: "./ctbcap_rec/log/dallass_and_vegas"
     enabled: true
@@ -628,7 +628,7 @@ models:
     cut_time: 0
 
   - name : "minimollyq"
-    platform : "chatubate"
+    platform : "chaturbate"
     save_path: "./ctbcap_rec/minimollyq"
     log_path: "./ctbcap_rec/log/minimollyq"
     enabled: true
@@ -637,7 +637,7 @@ models:
     cut_time: 0
 
   - name : "celinaimmel"
-    platform : "chatubate"
+    platform : "chaturbate"
     save_path: "./ctbcap_rec/celinaimmel"
     log_path: "./ctbcap_rec/log/celinaimmel"
     enabled: true
@@ -646,7 +646,7 @@ models:
     cut_time: 0
 
   - name : "lunaysebastian-"
-    platform : "chatubate"
+    platform : "chaturbate"
     save_path: "./ctbcap_rec/lunaysebastian-"
     log_path: "./ctbcap_rec/log/lunaysebastian-"
     enabled: true
@@ -655,7 +655,7 @@ models:
     cut_time: 0
 
   - name : "raveneusbiter"
-    platform : "chatubate"
+    platform : "chaturbate"
     save_path: "./ctbcap_rec/raveneusbiter"
     log_path: "./ctbcap_rec/log/raveneusbiter"
     enabled: true
@@ -932,6 +932,16 @@ models:
     enabled: true
     check_interval: 120
     retry_interval: 60
+    cut_time: 0
+
+
+    - name : "onlyxlicious_cb"
+    platform : "chaturbate"
+    save_path: "./ctbcap_rec/onlyxlicious_cb"
+    log_path: "./ctbcap_rec/log/onlyxlicious_cb"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
     cut_time: 0
 
   
