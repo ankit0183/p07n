@@ -961,8 +961,16 @@ models:
     retry_interval: 60
     cut_time: 0
 
+    - name : "sony_cutie"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/sony_cutie"
+    log_path: "./ctbcap_rec/log/sony_cutie"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
   
-
+  
   
 
     
