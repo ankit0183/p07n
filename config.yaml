@@ -915,7 +915,6 @@ models:
     retry_interval: 60
     cut_time: 0
 
-
   - name : "tihki_mirchi"
     platform : "stripchat"
     save_path: "./ctbcap_rec/tihki_mirchi"
@@ -934,8 +933,7 @@ models:
     retry_interval: 60
     cut_time: 0
 
-
-    - name : "onlyxlicious_cb"
+  - name : "onlyxlicious_cb"
     platform : "chaturbate"
     save_path: "./ctbcap_rec/onlyxlicious_cb"
     log_path: "./ctbcap_rec/log/onlyxlicious_cb"
@@ -944,8 +942,7 @@ models:
     retry_interval: 180
     cut_time: 0
 
-    
-    - name : "Sexy-_eva"
+  - name : "Sexy-_eva"
     platform : "stripchat"
     save_path: "./ctbcap_rec/Sexy-_eva"
     log_path: "./ctbcap_rec/log/Sexy-_eva"
