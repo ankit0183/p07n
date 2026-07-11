@@ -888,4 +888,13 @@ models:
     retry_interval: 60
     cut_time: 0
 
+  - name : "delhi_queen"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/delhi_queen"
+    log_path: "./ctbcap_rec/log/delhi_queen"
+    enabled: true
+    check_interval: 120
+    retry_interval: 60
+    cut_time: 0
+
     
