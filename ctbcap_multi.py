@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import platform
 import random
 import shutil
 import signal
@@ -55,6 +56,15 @@ class HealthCheckConfig:
     port: int = 8080
 
 @dataclass
+class DownloadQueueConfig:
+    max_concurrent_downloads: int = 3
+    max_concurrent_fetches: int = 5
+    offline_grace_seconds: int = 30
+    fetch_retry_attempts: int = 3
+    fetch_retry_delay: float = 5.0
+    min_free_space_mib: int = 1024
+
+@dataclass
 class GlobalConfig:
     save_path: str = "/save"
     log_path: str = "/log"
@@ -74,6 +84,7 @@ class GlobalConfig:
     notifications: NotificationConfig = field(default_factory=NotificationConfig)
     metadata: MetadataConfig = field(default_factory=MetadataConfig)
     health_check: HealthCheckConfig = field(default_factory=HealthCheckConfig)
+    download_queue: DownloadQueueConfig = field(default_factory=DownloadQueueConfig)
 
 @dataclass
 class ModelConfig:
@@ -127,6 +138,7 @@ class Config:
             notifications=NotificationConfig(**global_data.get('notifications', {})),
             metadata=MetadataConfig(**global_data.get('metadata', {})),
             health_check=HealthCheckConfig(**global_data.get('health_check', {})),
+            download_queue=DownloadQueueConfig(**global_data.get('download_queue', {})),
         )
         models = []
         for m in data.get('models', []):
@@ -255,11 +267,25 @@ class PlatformClient:
         self.debug = debug
         self.logger = logging.getLogger("platform")
     
-    async def fetch_stream_url(self, model: str, platform: str) -> Optional[str]:
-        if platform == "chaturbate":
-            return await self._fetch_chaturbate(model)
-        elif platform == "stripchat":
-            return await self._fetch_stripchat(model)
+    async def fetch_stream_url(self, model: str, platform: str, max_retries: int = 3, retry_delay: float = 5.0) -> Optional[str]:
+        for attempt in range(max_retries):
+            try:
+                if platform == "chaturbate":
+                    result = await self._fetch_chaturbate(model)
+                elif platform == "stripchat":
+                    result = await self._fetch_stripchat(model)
+                else:
+                    return None
+                
+                if result:
+                    return result
+                    
+            except Exception as e:
+                self.logger.warning(f"Attempt {attempt + 1}/{max_retries} failed for {model} on {platform}: {e}")
+            
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+        
         return None
     
     async def _fetch_chaturbate(self, model: str) -> Optional[str]:
@@ -276,11 +302,9 @@ class PlatformClient:
                     room_status = data.get('room_status', 'unknown')
                     self.logger.info(f"[{model}] Room status: {room_status}")
                 elif resp.status == 404:
-                    # Check for name change
                     async with self.session.get(f"https://chaturbate.com/{model}/", headers=headers) as r:
                         text = await r.text()
                         if 'location:' in text.lower():
-                            # Parse redirect for new name
                             pass
         except Exception as e:
             self.logger.error(f"Chaturbate fetch error for {model}: {e}")
@@ -295,7 +319,6 @@ class PlatformClient:
                     self.logger.debug(f"Stripchat API status: {resp.status}")
                 if resp.status in (200, 302):
                     data = await resp.json()
-                    # API returns cam object with isCamActive and streamName
                     cam = data.get('cam', {})
                     if cam.get('isCamActive') or cam.get('isCamAvailable'):
                         stream_name = cam.get('streamName')
@@ -304,6 +327,98 @@ class PlatformClient:
         except Exception as e:
             self.logger.error(f"Stripchat fetch error for {model}: {e}")
         return None
+
+# ========================
+# Download Queue Manager
+# ========================
+
+class DownloadQueue:
+    """Manages concurrent downloads with semaphores and grace period for offline detection."""
+    
+    def __init__(self, config: DownloadQueueConfig):
+        self.config = config
+        self.download_semaphore = asyncio.Semaphore(config.max_concurrent_downloads)
+        self.fetch_semaphore = asyncio.Semaphore(config.max_concurrent_fetches)
+        self.offline_grace_tasks: Dict[str, asyncio.Task] = {}
+        self.logger = logging.getLogger("download_queue")
+    
+    async def acquire_download_slot(self) -> bool:
+        """Try to acquire a download slot without blocking."""
+        return self.download_semaphore.locked() or await self._try_acquire(self.download_semaphore)
+    
+    async def _try_acquire(self, semaphore: asyncio.Semaphore) -> bool:
+        try:
+            await asyncio.wait_for(semaphore.acquire(), timeout=0.1)
+            return True
+        except asyncio.TimeoutError:
+            return False
+    
+    def release_download_slot(self):
+        if self.download_semaphore.locked():
+            self.download_semaphore.release()
+    
+    async def fetch_with_semaphore(self, fetch_func, *args, **kwargs):
+        """Fetch stream URL with semaphore to limit concurrent API calls."""
+        async with self.fetch_semaphore:
+            return await fetch_func(*args, **kwargs)
+    
+    def schedule_offline_grace(self, model_name: str, callback, grace_seconds: int = None):
+        """Schedule a grace period before actually stopping recording."""
+        grace = grace_seconds or self.config.offline_grace_seconds
+        
+        if model_name in self.offline_grace_tasks:
+            self.offline_grace_tasks[model_name].cancel()
+        
+        async def grace_period():
+            try:
+                await asyncio.sleep(grace)
+                self.logger.info(f"Grace period ended for {model_name}, executing offline callback")
+                await callback()
+            except asyncio.CancelledError:
+                self.logger.debug(f"Grace period cancelled for {model_name} (model came back online)")
+            finally:
+                self.offline_grace_tasks.pop(model_name, None)
+        
+        self.offline_grace_tasks[model_name] = asyncio.create_task(grace_period())
+    
+    def cancel_offline_grace(self, model_name: str) -> bool:
+        """Cancel grace period if model comes back online."""
+        if model_name in self.offline_grace_tasks:
+            self.offline_grace_tasks[model_name].cancel()
+            self.offline_grace_tasks.pop(model_name, None)
+            return True
+        return False
+    
+    def is_in_grace_period(self, model_name: str) -> bool:
+        return model_name in self.offline_grace_tasks
+
+# ========================
+# Disk Space Monitor
+# ========================
+
+class DiskSpaceMonitor:
+    def __init__(self, min_free_mib: int = 1024):
+        self.min_free_mib = min_free_mib
+        self.logger = logging.getLogger("disk_space")
+    
+    def check_space(self, path: str) -> tuple[bool, int]:
+        """Check if path has minimum free space. Returns (has_space, free_mib)."""
+        try:
+            stat = shutil.disk_usage(path)
+            free_mib = stat.free // (1024 * 1024)
+            return free_mib >= self.min_free_mib, free_mib
+        except Exception as e:
+            self.logger.error(f"Failed to check disk space for {path}: {e}")
+            return True, 0
+    
+    async def wait_for_space(self, path: str, check_interval: int = 60) -> bool:
+        """Wait until enough disk space is available."""
+        while True:
+            has_space, free_mib = self.check_space(path)
+            if has_space:
+                return True
+            self.logger.warning(f"Low disk space on {path}: {free_mib} MiB free, need {self.min_free_mib} MiB. Waiting...")
+            await asyncio.sleep(check_interval)
 
 # ========================
 # Recorder
@@ -320,24 +435,54 @@ class RecordingSession:
     output_file: str = ""
 
 class Recorder:
-    def __init__(self, global_config: GlobalConfig, metadata_logger: MetadataLogger, notifications: NotificationManager):
+    def __init__(self, global_config: GlobalConfig, metadata_logger: MetadataLogger, 
+                 notifications: NotificationManager, download_queue: DownloadQueue, 
+                 disk_monitor: DiskSpaceMonitor):
         self.global_config = global_config
         self.metadata_logger = metadata_logger
         self.notifications = notifications
+        self.download_queue = download_queue
+        self.disk_monitor = disk_monitor
         self.logger = logging.getLogger("recorder")
         self.sessions: Dict[str, RecordingSession] = {}
         self.ffmpeg_path = self._find_ffmpeg()
     
     def _find_ffmpeg(self) -> str:
+        """Find ffmpeg binary with support for Termux, macOS (Homebrew), and standard Linux paths."""
+        # Termux paths (Android)
         termux_paths = [
             '/data/data/com.termux/files/usr/bin/ffmpeg',
+            '/data/data/com.termux/files/usr/bin/ffmpeg-static',
         ]
+        
+        # macOS Homebrew paths (Apple Silicon and Intel)
+        mac_paths = [
+            '/opt/homebrew/bin/ffmpeg',      # Apple Silicon (M1/M2/M3)
+            '/usr/local/bin/ffmpeg',         # Intel Mac
+            '/opt/homebrew/opt/ffmpeg/bin/ffmpeg',
+        ]
+        
+        # Standard Linux paths
+        linux_paths = [
+            '/usr/bin/ffmpeg',
+            '/usr/local/bin/ffmpeg',
+            '/snap/bin/ffmpeg',
+            '/var/lib/snapd/snap/bin/ffmpeg',
+        ]
+        
+        # First try shutil.which (searches PATH)
         found = shutil.which('ffmpeg')
         if found:
             return found
-        for path in ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', *termux_paths]:
+        
+        # Search in platform-specific paths
+        all_paths = termux_paths + mac_paths + linux_paths
+        for path in all_paths:
             if os.path.isfile(path) and os.access(path, os.X_OK):
+                self.logger.info(f"Found ffmpeg at: {path}")
                 return path
+        
+        self.logger.warning("ffmpeg not found in standard locations, using 'ffmpeg' from PATH")
         return 'ffmpeg'
     
     def _build_ffmpeg_cmd(self, model: ModelConfig, stream_url: str, output_path: str) -> List[str]:
@@ -353,16 +498,24 @@ class Recorder:
         
         headers = f"Referer: {referer}\r\nOrigin: {origin}\r\n"
         
+        # Robust input options for handling network interruptions
         cmd = [
             self.ffmpeg_path,
             '-y', '-loglevel', 'warning' if not self.global_config.debug_mode else 'debug',
             '-nostdin',
+            # Input reliability options
+            '-reconnect', '1',
+            '-reconnect_at_eof', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '30',
+            '-rw_timeout', '30000000',  # 30 second read timeout (microseconds)
+            '-timeout', '30000000',      # 30 second connection timeout
             '-copyts', '-start_at_zero',
             '-copy_unknown',
             '-user_agent', self.global_config.user_agent,
             '-headers', headers,
             '-tls_verify', '0',
-            '-fflags', '+genpts+nobuffer',
+            '-fflags', '+genpts+nobuffer+discardcorrupt+igndts',
             '-i', stream_url,
         ]
         
@@ -385,6 +538,7 @@ class Recorder:
                 '-segment_start_number', '1',
                 '-reset_timestamps', '1',
                 '-segment_format_options', 'movflags=+faststart+frag_keyframe+empty_moov',
+                '-strftime', '1',  # Use strftime for segment naming
                 output_path
             ])
         else:
@@ -392,17 +546,35 @@ class Recorder:
             cmd.extend([
                 '-f', 'mp4',
                 '-movflags', 'frag_keyframe+empty_moov+faststart',
+                '-avoid_negative_ts', 'make_zero',
                 output_path
             ])
         
         return cmd
     
     async def start_recording(self, model: ModelConfig, stream_url: str) -> bool:
+        # Check disk space before starting
         save_path = model.save_path or os.path.join(self.global_config.save_path, model.name)
         Path(save_path).mkdir(parents=True, exist_ok=True)
         
+        has_space, free_mib = self.disk_monitor.check_space(save_path)
+        if not has_space:
+            self.logger.error(f"Insufficient disk space for {model.name}: {free_mib} MiB free, need {self.disk_monitor.min_free_mib} MiB")
+            await self.notifications.send(model.name, "DISK_SPACE_LOW",
+                f"Insufficient disk space: {free_mib} MiB free, need {self.disk_monitor.min_free_mib} MiB", model.notifications)
+            return False
+        
+        # Try to acquire download slot
+        acquired = await self.download_queue.acquire_download_slot()
+        if not acquired:
+            self.logger.warning(f"No download slot available for {model.name}, waiting...")
+            await asyncio.sleep(1)
+            acquired = await self.download_queue.acquire_download_slot()
+            if not acquired:
+                self.logger.error(f"Could not acquire download slot for {model.name}")
+                return False
+        
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        # Always use base name; _build_ffmpeg_cmd adds %03d for segment mode
         output_file = os.path.join(save_path, f"{model.name}-{timestamp}.mp4")
         
         cmd = self._build_ffmpeg_cmd(model, stream_url, output_file)
@@ -442,6 +614,7 @@ class Recorder:
             return True
         except Exception as e:
             self.logger.error(f"Failed to start recording for {model.name}: {e}")
+            self.download_queue.release_download_slot()
             return False
     
     async def _monitor_process(self, model_name: str, process: subprocess.Popen):
@@ -452,19 +625,34 @@ class Recorder:
             session = self.sessions.get(model_name)
             if session:
                 duration = time.time() - session.start_time
+                stderr_text = stderr.decode('utf-8', errors='ignore')[-2000:] if stderr else ""
                 self.metadata_logger.log_event(model_name, "recording_stopped", {
                     "duration_seconds": duration,
                     "return_code": return_code,
-                    "stderr": stderr.decode('utf-8', errors='ignore')[-1000:] if stderr else ""
+                    "stderr": stderr_text
                 })
+                
+                # Log the exit reason for debugging
+                if return_code == 0:
+                    self.logger.info(f"[{model_name}] Recording completed normally after {duration:.0f}s")
+                elif return_code == -15 or return_code == 143:  # SIGTERM
+                    self.logger.info(f"[{model_name}] Recording stopped by signal")
+                elif return_code < 0:
+                    self.logger.warning(f"[{model_name}] Recording terminated by signal {-return_code}")
+                else:
+                    self.logger.warning(f"[{model_name}] Recording exited with code {return_code}: {stderr_text[:500]}")
                 
                 await self.notifications.send(model_name, "RECORDING_STOPPED",
                     f"Recording stopped after {duration:.0f}s (code: {return_code})", 
-                    None)  # Will use global config
+                    None)
                 
                 del self.sessions[model_name]
+            
+            # Release download slot when recording ends
+            self.download_queue.release_download_slot()
         except Exception as e:
             self.logger.error(f"Process monitor error for {model_name}: {e}")
+            self.download_queue.release_download_slot()
     
     async def stop_recording(self, model_name: str):
         session = self.sessions.get(model_name)
@@ -476,6 +664,7 @@ class Recorder:
             except asyncio.TimeoutError:
                 session.process.kill()
                 await asyncio.to_thread(session.process.wait)
+            self.download_queue.release_download_slot()
     
     async def stop_all(self):
         for model_name in list(self.sessions.keys()):
@@ -488,13 +677,15 @@ class Recorder:
 class ModelMonitor:
     def __init__(self, model: ModelConfig, global_config: GlobalConfig, 
                  platform_client: PlatformClient, recorder: Recorder,
-                 metadata_logger: MetadataLogger, notifications: NotificationManager):
+                 metadata_logger: MetadataLogger, notifications: NotificationManager,
+                 download_queue: DownloadQueue):
         self.model = model
         self.global_config = global_config
         self.platform_client = platform_client
         self.recorder = recorder
         self.metadata_logger = metadata_logger
         self.notifications = notifications
+        self.download_queue = download_queue
         self.logger = logging.getLogger(f"monitor.{model.name}")
         self.running = False
         self.last_status = None
@@ -520,10 +711,20 @@ class ModelMonitor:
             await asyncio.sleep(interval)
     
     async def _check_and_record(self):
-        stream_url = await self.platform_client.fetch_stream_url(self.model.name, self.model.platform)
+        # Use download queue semaphore for fetching stream URL
+        stream_url = await self.download_queue.fetch_with_semaphore(
+            self.platform_client.fetch_stream_url, 
+            self.model.name, self.model.platform,
+            max_retries=self.global_config.download_queue.fetch_retry_attempts,
+            retry_delay=self.global_config.download_queue.fetch_retry_delay
+        )
         
         if stream_url:
-            # Model is online
+            # Model is online - cancel any grace period
+            was_in_grace = self.download_queue.cancel_offline_grace(self.model.name)
+            if was_in_grace:
+                self.logger.info(f"[{self.model.name}] Came back online during grace period, continuing recording")
+            
             if self.last_status != "online":
                 self.logger.info(f"[{self.model.name}] ONLINE - Stream URL found")
                 self.metadata_logger.log_event(self.model.name, "online", {"stream_url": stream_url})
@@ -548,10 +749,22 @@ class ModelMonitor:
                 self.last_status = "offline"
                 self.offline_since = time.time()
             
-            # Stop recording if was recording
-            if self.model.name in self.recorder.sessions:
-                self.logger.info(f"Stream ended for {self.model.name}, stopping recording")
-                await self.recorder.stop_recording(self.model.name)
+            # Schedule grace period before stopping recording
+            if self.model.name in self.recorder.sessions and not self.download_queue.is_in_grace_period(self.model.name):
+                self.logger.info(f"Stream ended for {self.model.name}, starting grace period ({self.global_config.download_queue.offline_grace_seconds}s)")
+                self.download_queue.schedule_offline_grace(
+                    self.model.name,
+                    lambda: self._stop_recording_after_grace(self.model.name),
+                    self.global_config.download_queue.offline_grace_seconds
+                )
+    
+    async def _stop_recording_after_grace(self, model_name: str):
+        """Called after grace period expires to actually stop recording."""
+        if model_name in self.recorder.sessions:
+            self.logger.info(f"Grace period ended for {model_name}, stopping recording")
+            await self.recorder.stop_recording(model_name)
+        else:
+            self.logger.debug(f"Recording already stopped for {model_name} before grace period ended")
     
     def stop(self):
         self.running = False
@@ -668,6 +881,8 @@ class CtbCap:
         self.metadata_logger: Optional[MetadataLogger] = None
         self.notifications: Optional[NotificationManager] = None
         self.recorder: Optional[Recorder] = None
+        self.download_queue: Optional[DownloadQueue] = None
+        self.disk_monitor: Optional[DiskSpaceMonitor] = None
         self.monitors: List[ModelMonitor] = []
         self.health_server: Optional[HealthServer] = None
         self.logger = logging.getLogger("ctbcap")
@@ -677,8 +892,12 @@ class CtbCap:
         # Setup logging for main
         setup_logging(self.config.global_.log_path, self.config.global_.debug_mode, "ctbcap")
         
-        # Initialize components
-        connector = aiohttp.TCPConnector(limit=100, limit_per_host=10)
+        # Initialize components with higher limits for concurrent operations
+        max_concurrent = max(
+            self.config.global_.download_queue.max_concurrent_fetches,
+            self.config.global_.download_queue.max_concurrent_downloads
+        ) * 2  # Buffer for health checks, notifications, etc.
+        connector = aiohttp.TCPConnector(limit=max_concurrent, limit_per_host=30)
         timeout = aiohttp.ClientTimeout(total=30, connect=10)
         self.session = aiohttp.ClientSession(connector=connector, timeout=timeout)
         
@@ -692,7 +911,12 @@ class CtbCap:
         
         self.notifications = NotificationManager(self.config.global_.notifications, self.session)
         
-        self.recorder = Recorder(self.config.global_, self.metadata_logger, self.notifications)
+        # Initialize download queue and disk monitor
+        self.download_queue = DownloadQueue(self.config.global_.download_queue)
+        self.disk_monitor = DiskSpaceMonitor(self.config.global_.download_queue.min_free_space_mib)
+        
+        self.recorder = Recorder(self.config.global_, self.metadata_logger, self.notifications, 
+                                self.download_queue, self.disk_monitor)
         
         # Create monitors for each model
         for model in self.config.models:
@@ -706,7 +930,8 @@ class CtbCap:
                 platform_client=self.platform_client,
                 recorder=self.recorder,
                 metadata_logger=self.metadata_logger,
-                notifications=self.notifications
+                notifications=self.notifications,
+                download_queue=self.download_queue
             )
             self.monitors.append(monitor)
         
@@ -749,7 +974,8 @@ class CtbCap:
                 platform_client=self.platform_client,
                 recorder=self.recorder,
                 metadata_logger=self.metadata_logger,
-                notifications=self.notifications
+                notifications=self.notifications,
+                download_queue=self.download_queue
             )
             self.monitors.append(monitor)
             asyncio.create_task(monitor.run())
@@ -890,15 +1116,47 @@ async def main():
     
     app = CtbCap(config, config_path)
     
-    # Signal handlers (with fallback for Termux/Android compatibility)
+    # Signal handlers (with fallback for Termux/Android/Unix compatibility)
     loop = asyncio.get_running_loop()
-    def _signal_handler():
+    
+    def _signal_handler(sig):
+        logging.getLogger("ctbcap").info(f"Received signal {sig.name}, shutting down...")
         asyncio.create_task(app.stop())
+    
+    def _reload_handler(sig):
+        logging.getLogger("ctbcap").info(f"Received signal {sig.name}, reloading config...")
+        asyncio.create_task(app.reload_config())
+    
+    # Register signal handlers
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            loop.add_signal_handler(sig, _signal_handler)
-        except (NotImplementedError, ValueError):
-            signal.signal(sig, lambda s, f: asyncio.ensure_future(app.stop()))
+            loop.add_signal_handler(sig, lambda s=sig: _signal_handler(s))
+        except (NotImplementedError, ValueError, OSError):
+            # Fallback for platforms without add_signal_handler (Windows, some Termux)
+            try:
+                signal.signal(sig, lambda s, f: _signal_handler(signal.Signals(s)))
+            except (ValueError, OSError):
+                pass
+    
+    # SIGHUP for config reload (Unix/Linux/Mac)
+    try:
+        loop.add_signal_handler(signal.SIGHUP, lambda: _reload_handler(signal.SIGHUP))
+    except (NotImplementedError, ValueError, OSError, AttributeError):
+        try:
+            signal.signal(signal.SIGHUP, lambda s, f: _reload_handler(signal.SIGHUP))
+        except (ValueError, OSError, AttributeError):
+            pass
+    
+    # SIGUSR1/SIGUSR2 for manual control (Unix/Linux/Mac)
+    for sig, handler in [(signal.SIGUSR1, lambda: asyncio.create_task(app.health_server.stop() if app.health_server else None)),
+                         (signal.SIGUSR2, lambda: asyncio.create_task(app.health_server.start() if app.health_server else None))]:
+        try:
+            loop.add_signal_handler(sig, handler)
+        except (NotImplementedError, ValueError, OSError, AttributeError):
+            try:
+                signal.signal(sig, lambda s, f: handler())
+            except (ValueError, OSError, AttributeError):
+                pass
     
     try:
         await app.start()
