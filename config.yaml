@@ -1006,3 +1006,46 @@ models:
     check_interval: 300
     retry_interval: 180
     cut_time: 0
+
+  - name : "DaissyZie"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/DaissyZie"
+    log_path: "./ctbcap_rec/log/DaissyZie"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "baby_jannat"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/baby_jannat"
+    log_path: "./ctbcap_rec/log/baby_jannat"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "Yoga_Session"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Yoga_Session"
+    log_path: "./ctbcap_rec/log/Yoga_Session"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "Riya_rani7"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Riya_rani7"
+    log_path: "./ctbcap_rec/log/Riya_rani7"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+
+  
+
+  
+
+    
