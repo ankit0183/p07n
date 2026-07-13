@@ -1043,6 +1043,15 @@ models:
     retry_interval: 180
     cut_time: 0
 
+  - name : "Dazy_lilly"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Dazy_lilly"
+    log_path: "./ctbcap_rec/log/Dazy_lilly"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
 
   
 
