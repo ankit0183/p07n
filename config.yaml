@@ -1071,8 +1071,16 @@ models:
     retry_interval: 180
     cut_time: 0
 
-    
+  - name : "princess_rink"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/princess_rink"
+    log_path: "./ctbcap_rec/log/princess_rink"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
 
+    
     
 
   
