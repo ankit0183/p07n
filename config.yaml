@@ -1052,6 +1052,28 @@ models:
     retry_interval: 180
     cut_time: 0
 
+  - name : "Shanaya_001"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Shanaya_001"
+    log_path: "./ctbcap_rec/log/Shanaya_001"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+
+  - name : "Love_Sundari"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Love_Sundari"
+    log_path: "./ctbcap_rec/log/Love_Sundari"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+    
+
+    
 
   
 
