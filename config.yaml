@@ -1186,4 +1186,14 @@ models:
     check_interval: 300
     retry_interval: 180
     cut_time: 0
+
+  - name : "hot-avni"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/hot-avni"
+    log_path: "./ctbcap_rec/log/hot-avni"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
     
