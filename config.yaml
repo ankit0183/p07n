@@ -1166,4 +1166,14 @@ models:
     check_interval: 300
     retry_interval: 180
     cut_time: 0
+
+
+  - name : "neha_singh0"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/neha_singh0"
+    log_path: "./ctbcap_rec/log/neha_singh0"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
     
