@@ -1176,4 +1176,14 @@ models:
     check_interval: 300
     retry_interval: 180
     cut_time: 0
+
+
+  - name : "Shanaya_xo"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Shanaya_xo"
+    log_path: "./ctbcap_rec/log/Shanaya_xo"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
     
