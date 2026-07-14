@@ -1156,4 +1156,14 @@ models:
     check_interval: 300
     retry_interval: 180
     cut_time: 0
+
+  
+  - name : "Jerin_Couple61"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Jerin_Couple61"
+    log_path: "./ctbcap_rec/log/Jerin_Couple61"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
     
