@@ -1196,4 +1196,11 @@ models:
     retry_interval: 180
     cut_time: 0
 
-    
+  - name : "Ranii2"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Ranii2"
+    log_path: "./ctbcap_rec/log/Ranii2"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
