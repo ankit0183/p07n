@@ -1148,14 +1148,12 @@ models:
     retry_interval: 180
     cut_time: 0
 
-  
-    
-
-    
-    
-
-  
-
-  
-
+  - name : "Xo_maya"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/Xo_maya"
+    log_path: "./ctbcap_rec/log/Xo_maya"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
     
