@@ -979,7 +979,7 @@ models:
     retry_interval: 60
     cut_time: 0
 
-   - name : "eleanorka"
+  - name : "eleanorka"
     platform : "chaturbate"
     save_path: "./ctbcap_rec/eleanorka"
     log_path: "./ctbcap_rec/log/eleanorka"
