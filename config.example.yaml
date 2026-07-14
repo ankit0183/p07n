@@ -18,6 +18,21 @@ global:
   ffmpeg_codec: "copy"
   ffmpeg_extra_args: ""
 
+  # Stall detection: restart FFmpeg if output file stops growing for this many seconds
+  stall_timeout_seconds: 120
+  # Number of consecutive offline checks before marking model offline (prevents false offline)
+  offline_checks_required: 2
+
+  # Log rotation: max size per log file in MiB, number of backup files to keep
+  max_log_size_mib: 10
+  log_backups: 3
+
+  # Termux-specific (Android): send system notifications and vibrate on events
+  termux_notifications: false
+  termux_vibrate: false
+  # Reduce check frequency when battery is below 20%
+  battery_aware: false
+
   notifications:
     enabled: false
     telegram:
@@ -47,9 +62,6 @@ global:
     fetch_retry_attempts: 3
     fetch_retry_delay: 5.0
     min_free_space_mib: 1024
-
-  stall_timeout_seconds: 120
-  offline_checks_required: 2
 
 models:
   - name: "Ada-19"
@@ -235,8 +247,8 @@ models:
     
   - name: "Virgin_Aisha"
     platform: "stripchat"
-    save_path: "./ctbcap_rec/Virgin_Aisha"
-    log_path: "./ctbcap_rec/log/Virgin_Aisha"
+    save_path: "./ctbcap_rec/ Virgin_Aisha"
+    log_path: "./ctbcap_rec/log/ Virgin_Aisha"
     enabled: true
     check_interval: 60
     retry_interval: 60
@@ -309,6 +321,15 @@ models:
     platform : "stripchat"
     save_path: "./ctbcap_rec/Desi-Rani_"
     log_path: "./ctbcap_rec/log/Desi-Rani_"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name: "xoxoashi"
+    platform: "stripchat"
+    save_path: "./ctbcap_rec/xoxoashi"
+    log_path: "./ctbcap_rec/log/xoxoashi"
     enabled: true
     check_interval: 300
     retry_interval: 180
@@ -449,6 +470,15 @@ models:
     retry_interval: 180
     cut_time: 0
 
+  - name : "your-zoya"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/your-zoya"
+    log_path: "./ctbcap_rec/log/your-zoya"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
   - name : "hot-couple-0"
     platform : "stripchat"
     save_path: "./ctbcap_rec/hot-couple-0"
@@ -480,6 +510,15 @@ models:
     platform : "stripchat"
     save_path: "./ctbcap_rec/LustyRosee"
     log_path: "./ctbcap_rec/log/LustyRosee"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+  - name : "lovelyshaski"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/lovelyshaski"
+    log_path: "./ctbcap_rec/log/lovelyshaski"
     enabled: true
     check_interval: 300
     retry_interval: 180
@@ -561,6 +600,15 @@ models:
     platform : "stripchat"
     save_path: "./ctbcap_rec/GlaydsLeveto"
     log_path: "./ctbcap_rec/log/GlaydsLeveto"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+  
+  - name : "LustyRosee"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/LustyRosee"
+    log_path: "./ctbcap_rec/log/LustyRosee"
     enabled: true
     check_interval: 300
     retry_interval: 180
@@ -945,162 +993,7 @@ models:
     retry_interval: 60
     cut_time: 0
   
-  - name : "SEXY_SIYAA_"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/SEXY_SIYAA_"
-    log_path: "./ctbcap_rec/log/SEXY_SIYAA_"
-    enabled: true
-    check_interval: 120
-    retry_interval: 60
-    cut_time: 0
-
-  - name : "eleanorka"
-    platform : "chaturbate"
-    save_path: "./ctbcap_rec/eleanorka"
-    log_path: "./ctbcap_rec/log/eleanorka"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-  - name : "kailyginger"
-    platform : "chaturbate"
-    save_path: "./ctbcap_rec/kailyginger"
-    log_path: "./ctbcap_rec/log/kailyginger"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
   
-  - name : "michalkandoll"
-    platform : "chaturbate"
-    save_path: "./ctbcap_rec/michalkandoll"
-    log_path: "./ctbcap_rec/log/michalkandoll"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
+  
 
-  - name : "DaissyZie"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/DaissyZie"
-    log_path: "./ctbcap_rec/log/DaissyZie"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-  - name : "baby_jannat"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/baby_jannat"
-    log_path: "./ctbcap_rec/log/baby_jannat"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-  - name : "Yoga_Session"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/Yoga_Session"
-    log_path: "./ctbcap_rec/log/Yoga_Session"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-  - name : "Riya_rani7"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/Riya_rani7"
-    log_path: "./ctbcap_rec/log/Riya_rani7"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-  - name : "Dazy_lilly"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/Dazy_lilly"
-    log_path: "./ctbcap_rec/log/Dazy_lilly"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-  - name : "Shanaya_001"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/Shanaya_001"
-    log_path: "./ctbcap_rec/log/Shanaya_001"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-
-  - name : "Love_Sundari"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/Love_Sundari"
-    log_path: "./ctbcap_rec/log/Love_Sundari"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-  - name : "princess_rink"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/princess_rink"
-    log_path: "./ctbcap_rec/log/princess_rink"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-
-  - name : "indulgencex"
-    platform : "chaturbate"
-    save_path: "./ctbcap_rec/indulgencex"
-    log_path: "./ctbcap_rec/log/indulgencex"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-
-  - name : "mysat"
-    platform : "chaturbate"
-    save_path: "./ctbcap_rec/mysat"
-    log_path: "./ctbcap_rec/log/mysat"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-
-  - name : "best_fucks"
-    platform : "chaturbate"
-    save_path: "./ctbcap_rec/best_fucks"
-    log_path: "./ctbcap_rec/log/best_fucks"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-
-  - name : "kanchan7909"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/kanchan7909"
-    log_path: "./ctbcap_rec/log/kanchan7909"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0
-
-  - name : "DEEPA_33"
-    platform : "stripchat"
-    save_path: "./ctbcap_rec/DEEPA_33"
-    log_path: "./ctbcap_rec/log/DEEPA_33"
-    enabled: true
-    check_interval: 300
-    retry_interval: 180
-    cut_time: 0 
     
