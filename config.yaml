@@ -1130,10 +1130,10 @@ models:
     retry_interval: 180
     cut_time: 0
 
-  - name : "daisy_shah_"
+  - name : "Daisy_Shah_"
     platform : "stripchat"
-    save_path: "./ctbcap_rec/daisy_shah_"
-    log_path: "./ctbcap_rec/log/daisy_shah_"
+    save_path: "./ctbcap_rec/Daisy_Shah_"
+    log_path: "./ctbcap_rec/log/Daisy_Shah_"
     enabled: true
     check_interval: 300
     retry_interval: 180
