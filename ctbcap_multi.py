@@ -1214,6 +1214,7 @@ class CtbCap:
 # ========================
 
 PID_FILE = "ctbcap.pid"
+_is_daemon = False
 
 def _write_pid():
     with open(PID_FILE, 'w') as f:
@@ -1233,9 +1234,44 @@ def _read_pid() -> Optional[int]:
         return None
 
 def daemon_start():
+    """Double-fork to fully detach from terminal. Must be called before asyncio.run()."""
+    global _is_daemon
+    # First fork: parent exits, child continues
+    try:
+        pid = os.fork()
+        if pid > 0:
+            # Parent: wait for child to initialize, then exit cleanly
+            time.sleep(1)
+            print(f"Daemon started (PID: {pid})")
+            os._exit(0)
+    except OSError as e:
+        print(f"Failed to daemonize (first fork): {e}")
+        return
+
+    # Child: create new session to detach from terminal
+    os.setsid()
+
+    # Second fork: prevent child from acquiring a controlling terminal
+    try:
+        pid = os.fork()
+        if pid > 0:
+            # First child: exit
+            os._exit(0)
+    except OSError as e:
+        print(f"Failed to daemonize (second fork): {e}")
+        os._exit(1)
+
+    # Grandchild: fully detached daemon
+    _is_daemon = True
+    # Redirect stdio to /dev/null so nothing breaks
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+
     TermuxHelper.wake_lock(True)
     _write_pid()
-    print(f"Daemon started (PID: {os.getpid()})")
 
 def daemon_stop():
     pid = _read_pid()
@@ -1362,7 +1398,7 @@ async def main():
         print("No models configured!")
         return 1
 
-    if IS_TERMUX and not args.daemon:
+    if IS_TERMUX and not args.daemon and not _is_daemon:
         _termux_foreground_setup()
 
     if IS_TERMUX and config.global_.termux_notifications:

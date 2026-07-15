@@ -65,8 +65,9 @@ python3 ctbcap_multi.py
 
 | Command | Description |
 |---|---|
-| `python3 ctbcap_multi.py` | Run the recorder (foreground) |
-| `python3 ctbcap_multi.py -D` | Run as daemon (background, acquires Termux wake-lock on Android) |
+| `python3 ctbcap_multi.py` | Run the recorder (auto-daemonizes on Termux) |
+| `python3 ctbcap_multi.py -D` | Run as daemon (background, acquires Termux wake-lock) |
+| `python3 ctbcap_multi.py -F` | Force foreground mode (even on Termux) |
 | `python3 ctbcap_multi.py -S` | Stop the running daemon |
 | `python3 ctbcap_multi.py -c /path/to/config.yaml` | Use a custom config file |
 | `python3 ctbcap_multi.py --validate` | Validate config and check environment (FFmpeg, platform, models) |
@@ -501,12 +502,23 @@ python3 ctbcap_multi.py -S
 pkg install python ffmpeg
 pip install aiohttp pyyaml
 
-# Start daemon (auto acquires wake-lock)
+# Start (auto-daemonizes on Termux for reliability)
+python3 ctbcap_multi.py
+
+# Or explicitly start as daemon
 python3 ctbcap_multi.py -D
+
+# Force foreground mode (not recommended - may be killed on screen-off)
+python3 ctbcap_multi.py -F
 
 # Stop daemon
 python3 ctbcap_multi.py -S
+
+# Check if daemon is running
+python3 ctbcap_multi.py --status
 ```
+
+> **Important:** On Termux, the process auto-daemonizes by default because Termux kills foreground processes when the screen turns off or you switch apps. Use `-D` for reliable recording. Use `-F` only for debugging.
 
 ### systemd Service (Linux)
 
