@@ -1213,3 +1213,14 @@ models:
     check_interval: 300
     retry_interval: 180
     cut_time: 0
+
+  - name : "moodel_816"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/moodel_816"
+    log_path: "./ctbcap_rec/log/moodel_816"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
+
+    
