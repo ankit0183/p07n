@@ -1253,6 +1253,22 @@ def daemon_stop():
         print("Daemon not running (stale PID file removed)")
         return False
 
+def _termux_foreground_setup():
+    """Setup for running in foreground on Termux. Acquires wake-lock and prints tips."""
+    if not IS_TERMUX:
+        return
+    TermuxHelper.wake_lock(True)
+    print("=" * 60)
+    print("  Termux detected - wake-lock acquired")
+    print("  WARNING: For reliable recording, use daemon mode:")
+    print("")
+    print("    python3 ctbcap_multi.py -D")
+    print("")
+    print("  Daemon mode survives screen-off and app switching.")
+    print("  Current foreground mode may be killed if Termux session ends.")
+    print("=" * 60)
+    print()
+
 # ========================
 # CLI Entry Point
 # ========================
@@ -1265,7 +1281,8 @@ def parse_args():
     parser.add_argument('--list', action='store_true', help='List all configured models and exit')
     parser.add_argument('--status', action='store_true', help='Show running daemon status and exit')
     parser.add_argument('--models', nargs='+', metavar='NAME', help='Only monitor these specific models')
-    parser.add_argument('-D', '--daemon', action='store_true', help='Run in background')
+    parser.add_argument('-D', '--daemon', action='store_true', help='Run in background (recommended for Termux)')
+    parser.add_argument('-F', '--foreground', action='store_true', help='Force foreground mode (even on Termux)')
     parser.add_argument('-S', '--stop', action='store_true', help='Stop running daemon')
     return parser.parse_args()
 
@@ -1278,6 +1295,12 @@ def _find_config() -> str:
 
 async def main():
     args = parse_args()
+
+    # Create new process group to survive terminal closure
+    try:
+        os.setpgrp()
+    except OSError:
+        pass
 
     if args.version:
         print("CtbCap Multi-Model Recorder v2.0.0")
@@ -1339,6 +1362,9 @@ async def main():
         print("No models configured!")
         return 1
 
+    if IS_TERMUX and not args.daemon:
+        _termux_foreground_setup()
+
     if IS_TERMUX and config.global_.termux_notifications:
         TermuxHelper.notification("CtbCap", "Starting up...", "ctbcap-start", "low")
 
@@ -1393,10 +1419,21 @@ async def main():
 
 if __name__ == '__main__':
     _daemon_mode = '-D' in sys.argv or '--daemon' in sys.argv
+    _foreground_mode = '-F' in sys.argv or '--foreground' in sys.argv
+
     if _daemon_mode:
         daemon_start()
         atexit.register(lambda: (TermuxHelper.wake_lock(False), _remove_pid()))
+    elif IS_TERMUX and not _foreground_mode:
+        # On Termux without explicit foreground flag, auto-daemonize for reliability
+        print("Termux detected. Auto-starting in daemon mode for reliability.")
+        print("Use -F to force foreground mode.")
+        daemon_start()
+        atexit.register(lambda: (TermuxHelper.wake_lock(False), _remove_pid()))
+
     try:
         sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
+        if IS_TERMUX:
+            TermuxHelper.wake_lock(False)
         pass
