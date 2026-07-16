@@ -205,6 +205,7 @@ All endpoints run on `http://localhost:8080` (configurable in `config.yaml` unde
 | `/control/{model}/stop` | POST | Stop recording for one model |
 | `/control/stop-all` | POST | Stop all recordings |
 | `/control/reload-config` | POST | Hot-reload config.yaml |
+| `/control/add-model` | POST | Add a new model and hot-reload |
 
 ---
 
@@ -413,6 +414,59 @@ Response:
 ```json
 {
     "status": "reloaded"
+}
+```
+
+---
+
+### Add Model
+
+Add a new model to `config.yaml` and hot-reload the daemon instantly.
+
+```bash
+# Add a StripChat model
+curl -X POST http://localhost:8080/control/add-model \
+  -H "Content-Type: application/json" \
+  -d '{"name": "ModelName", "platform": "stripchat"}'
+
+# Add a Chaturbate model
+curl -X POST http://localhost:8080/control/add-model \
+  -H "Content-Type: application/json" \
+  -d '{"name": "ModelName", "platform": "chaturbate"}'
+
+# Pretty print
+curl -s -X POST http://localhost:8080/control/add-model \
+  -H "Content-Type: application/json" \
+  -d '{"name": "ModelName", "platform": "stripchat"}' | python3 -m json.tool
+
+# Add and verify it's running
+curl -s -X POST http://localhost:8080/control/add-model \
+  -H "Content-Type: application/json" \
+  -d '{"name": "ModelName", "platform": "stripchat"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])"
+```
+
+Request body (JSON):
+```json
+{
+    "name": "ModelName",
+    "platform": "stripchat"
+}
+```
+
+Response (success):
+```json
+{
+    "status": "added",
+    "name": "ModelName",
+    "platform": "stripchat"
+}
+```
+
+Response (duplicate):
+```json
+{
+    "status": "error",
+    "message": "Model 'ModelName' already exists"
 }
 ```
 

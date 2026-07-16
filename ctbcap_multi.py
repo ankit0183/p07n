@@ -960,6 +960,37 @@ class ModelMonitor:
 # Health Check Server
 # ========================
 
+def _add_model_to_config(config_path: str, name: str, platform: str):
+    with open(config_path, 'r') as f:
+        config_data = yaml.safe_load(f) or {}
+
+    if 'models' not in config_data:
+        config_data['models'] = []
+
+    for m in config_data['models']:
+        if m.get('name') == name:
+            raise ValueError(f"Model '{name}' already exists in config")
+
+    global_cfg = config_data.get('global', {})
+    save_path = os.path.join(global_cfg.get('save_path', './ctbcap_rec'), name)
+    log_path = os.path.join(global_cfg.get('log_path', './ctbcap_rec/log'), name)
+
+    new_model = {
+        'name': name,
+        'platform': platform,
+        'save_path': save_path,
+        'log_path': log_path,
+        'enabled': True,
+        'check_interval': 300,
+        'retry_interval': 180,
+        'cut_time': 0,
+    }
+
+    config_data['models'].append(new_model)
+
+    with open(config_path, 'w') as f:
+        yaml.dump(config_data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
 class HealthServer:
     def __init__(self, port: int, recorder: Recorder, monitors: List[ModelMonitor], ctbcap_app: 'CtbCap'):
         self.port = port
@@ -981,6 +1012,7 @@ class HealthServer:
         self.app.router.add_post('/control/{model}/stop', self.stop_model_handler)
         self.app.router.add_post('/control/stop-all', self.stop_all_handler)
         self.app.router.add_post('/control/reload-config', self.reload_config_handler)
+        self.app.router.add_post('/control/add-model', self.add_model_handler)
 
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
@@ -1046,6 +1078,36 @@ class HealthServer:
             return web.json_response({"status": "reloaded"})
         except Exception as e:
             return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+    async def add_model_handler(self, request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"status": "error", "message": "Invalid JSON body"}, status=400)
+
+        name = data.get("name", "").strip()
+        platform = data.get("platform", "").strip().lower()
+
+        if not name:
+            return web.json_response({"status": "error", "message": "Missing required field: name"}, status=400)
+        if platform not in ("chaturbate", "stripchat"):
+            return web.json_response({"status": "error", "message": "platform must be 'chaturbate' or 'stripchat'"}, status=400)
+
+        for m in self.ctbcap_app.config.models:
+            if m.name == name:
+                return web.json_response({"status": "error", "message": f"Model '{name}' already exists"}, status=409)
+
+        try:
+            _add_model_to_config(self.ctbcap_app.config_path, name, platform)
+        except Exception as e:
+            return web.json_response({"status": "error", "message": f"Failed to write config: {e}"}, status=500)
+
+        try:
+            await self.ctbcap_app.reload_config()
+        except Exception as e:
+            return web.json_response({"status": "error", "message": f"Config saved but reload failed: {e}"}, status=500)
+
+        return web.json_response({"status": "added", "name": name, "platform": platform})
 
     async def metrics_handler(self, request):
         lines = [
@@ -1209,6 +1271,9 @@ class CtbCap:
         self.logger.info(f"\n{self.stats.summary()}")
         self.logger.info("Shutdown complete")
 
+        TermuxHelper.wake_lock(False)
+        _remove_pid()
+
 # ========================
 # Daemon / Background Helpers
 # ========================
@@ -1236,6 +1301,16 @@ def _read_pid() -> Optional[int]:
 def daemon_start():
     """Double-fork to fully detach from terminal. Must be called before asyncio.run()."""
     global _is_daemon
+
+    existing_pid = _read_pid()
+    if existing_pid:
+        try:
+            os.kill(existing_pid, 0)
+            print(f"Daemon already running (PID: {existing_pid}). Use -S to stop it first.")
+            return
+        except ProcessLookupError:
+            _remove_pid()
+
     # First fork: parent exits, child continues
     try:
         pid = os.fork()
@@ -1263,6 +1338,7 @@ def daemon_start():
 
     # Grandchild: fully detached daemon
     _is_daemon = True
+
     # Redirect stdio to /dev/null so nothing breaks
     devnull = os.open(os.devnull, os.O_RDWR)
     os.dup2(devnull, 0)
@@ -1270,8 +1346,18 @@ def daemon_start():
     os.dup2(devnull, 2)
     os.close(devnull)
 
+    # Acquire wake-lock after fully detached
     TermuxHelper.wake_lock(True)
+    # Ensure Termux knows about the wake-lock even after session reload
+    try:
+        subprocess.run(['termux-reload-settings'], capture_output=True, timeout=5)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
     _write_pid()
+
+    # Register cleanup in THIS process (grandchild), not the parent
+    atexit.register(lambda: (TermuxHelper.wake_lock(False), _remove_pid()))
 
 def daemon_stop():
     pid = _read_pid()
@@ -1459,13 +1545,11 @@ if __name__ == '__main__':
 
     if _daemon_mode:
         daemon_start()
-        atexit.register(lambda: (TermuxHelper.wake_lock(False), _remove_pid()))
     elif IS_TERMUX and not _foreground_mode:
         # On Termux without explicit foreground flag, auto-daemonize for reliability
         print("Termux detected. Auto-starting in daemon mode for reliability.")
         print("Use -F to force foreground mode.")
         daemon_start()
-        atexit.register(lambda: (TermuxHelper.wake_lock(False), _remove_pid()))
 
     try:
         sys.exit(asyncio.run(main()))
