@@ -287,16 +287,6 @@ class TermuxHelper:
             pass
         return None
 
-    @staticmethod
-    def wake_lock(acquire: bool = True):
-        if not IS_TERMUX:
-            return
-        try:
-            cmd = 'termux-wake-lock' if acquire else 'termux-wake-unlock'
-            subprocess.run([cmd], capture_output=True, timeout=5)
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
 # ========================
 # Metadata Logging
 # ========================
@@ -1286,7 +1276,6 @@ class CtbCap:
         self.logger.info(f"\n{self.stats.summary()}")
         self.logger.info("Shutdown complete")
 
-        TermuxHelper.wake_lock(False)
         TermuxHelper.remove_notification("ctbcap-ongoing")
         _remove_pid()
 
@@ -1362,21 +1351,13 @@ def daemon_start():
     os.dup2(devnull, 2)
     os.close(devnull)
 
-    # Acquire wake-lock after fully detached
-    TermuxHelper.wake_lock(True)
-    # Ensure Termux knows about the wake-lock even after session reload
-    try:
-        subprocess.run(['termux-reload-settings'], capture_output=True, timeout=5)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
     # Ongoing notification prevents Android from killing the Termux app
-    TermuxHelper.ongoing_notification("CtbCap Daemon", "Recording daemon active — will not be killed")
+    TermuxHelper.ongoing_notification("CtbCap Daemon", "Recording daemon active")
 
     _write_pid()
 
     # Register cleanup in THIS process (grandchild), not the parent
-    atexit.register(lambda: (TermuxHelper.wake_lock(False), TermuxHelper.remove_notification("ctbcap-ongoing"), _remove_pid()))
+    atexit.register(lambda: (TermuxHelper.remove_notification("ctbcap-ongoing"), _remove_pid()))
 
 def daemon_stop():
     pid = _read_pid()
@@ -1385,7 +1366,6 @@ def daemon_stop():
         return False
     try:
         os.kill(pid, signal.SIGTERM)
-        TermuxHelper.wake_lock(False)
         _remove_pid()
         print(f"Daemon (PID: {pid}) stopped")
         return True
@@ -1395,18 +1375,16 @@ def daemon_stop():
         return False
 
 def _termux_foreground_setup():
-    """Setup for running in foreground on Termux. Acquires wake-lock and prints tips."""
+    """Setup for running in foreground on Termux."""
     if not IS_TERMUX:
         return
-    TermuxHelper.wake_lock(True)
     print("=" * 60)
-    print("  Termux detected - wake-lock acquired")
-    print("  WARNING: For reliable recording, use daemon mode:")
+    print("  Termux detected")
+    print("  For reliable recording, use daemon mode:")
     print("")
     print("    python3 ctbcap_multi.py -D")
     print("")
     print("  Daemon mode survives screen-off and app switching.")
-    print("  Current foreground mode may be killed if Termux session ends.")
     print("=" * 60)
     print()
 
@@ -1468,7 +1446,7 @@ async def main():
         enabled = [m.name for m in config.models if m.enabled]
         print(f"Models ({len(enabled)} enabled): {enabled}")
         if IS_TERMUX:
-            print("Termux detected: notifications and wake-lock available")
+            print("Termux detected: notifications available")
         else:
             print(f"Platform: {platform.system()} {platform.machine()}")
         ffmpeg = shutil.which('ffmpeg')
@@ -1573,6 +1551,4 @@ if __name__ == '__main__':
     try:
         sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
-        if IS_TERMUX:
-            TermuxHelper.wake_lock(False)
         pass
