@@ -1261,3 +1261,11 @@ models:
     cut_time: 0
 
     
+  - name : "hania_zaidi"
+    platform : "stripchat"
+    save_path: "./ctbcap_rec/hania_zaidi"
+    log_path: "./ctbcap_rec/log/hania_zaidi"
+    enabled: true
+    check_interval: 300
+    retry_interval: 180
+    cut_time: 0
