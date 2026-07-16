@@ -2,23 +2,83 @@
 
 A Python-based multi-model livestream recorder for **Chaturbate** and **StripChat**.
 Records ALL configured online models concurrently with auto-discovery, auto-restart,
-tmux integration, and full CLI management from config.yaml.
+tmux integration, and full CLI management from `config.yaml`.
+
+Also includes the legacy **shell-based single-model recorder** (`ctbcap` v4.0-r10).
+
+---
+
+## Table of Contents
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [CLI Commands](#cli-commands)
+  - [start](#start--start-recording-all-models)
+  - [stop](#stop--stop-running-daemon)
+  - [add](#add--add-a-single-model)
+  - [add-bulk](#add-bulk--add-multiple-models-at-once)
+  - [remove](#remove--remove-a-model)
+  - [list](#list--list-all-configured-models)
+  - [status](#status--show-live-recording-status)
+  - [discover](#discover--discover-all-online-models)
+  - [dedup](#dedup--remove-duplicate-models)
+  - [validate](#validate--validate-config-file)
+  - [version](#version--show-version)
+- [Tmux Commands](#tmux-commands)
+  - [tmux](#tmux--start-in-tmux-session)
+  - [tmux-dashboard](#tmux-dashboard--start-tmux-dashboard)
+  - [tmux-attach](#tmux-attach--attach-to-tmux-session)
+  - [tmux-stop](#tmux-stop--kill-tmux-session)
+- [config.yaml Reference](#configyaml--full-reference)
+  - [Global Settings](#global-settings)
+  - [Per-Model Settings](#per-model-settings)
+- [Health Server API](#health-server-api)
+- [Signal Handling](#signal-handling)
+- [Typical Workflows](#typical-workflows)
+- [Output Structure](#output-structure)
+- [Shell Script (ctbcap) - Single Model Recorder](#shell-script-ctbcap---single-model-recorder)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+
+---
 
 ## Requirements
 
-- Python 3.8+
-- `aiohttp` (`pip install aiohttp`)
-- `pyyaml` (`pip install pyyaml`)
-- `ffmpeg` installed and in PATH
-- `tmux` (optional, for tmux features)
+| Dependency | Required | Version |
+|------------|----------|---------|
+| Python | Yes | 3.8+ |
+| aiohttp | Yes | `pip install aiohttp` |
+| pyyaml | Yes | `pip install pyyaml` |
+| ffmpeg | Yes | Any recent version |
+| tmux | Optional | For tmux features |
 
-### Install dependencies
+---
+
+## Installation
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/ankit0183/p07n.git
+cd p07n
+```
+
+### 2. Install Python dependencies
 
 ```bash
 pip install aiohttp pyyaml
 ```
 
-### Install ffmpeg
+Or with a virtual environment:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install aiohttp pyyaml
+```
+
+### 3. Install ffmpeg
 
 **Termux (Android):**
 ```bash
@@ -32,14 +92,48 @@ brew install ffmpeg
 
 **Ubuntu / Debian:**
 ```bash
-sudo apt install ffmpeg
+sudo apt update && sudo apt install ffmpeg
+```
+
+**Fedora / RHEL:**
+```bash
+sudo dnf install ffmpeg
+```
+
+**Windows (winget):**
+```powershell
+winget install ffmpeg
+```
+
+### 4. Install tmux (optional)
+
+```bash
+# Termux
+pkg install tmux
+
+# macOS
+brew install tmux
+
+# Ubuntu / Debian
+sudo apt install tmux
+```
+
+### 5. Verify installation
+
+```bash
+python3 ctbcap_multi.py --version
+```
+
+Expected output:
+```
+CtbCap Multi-Model Recorder v2.0.0
 ```
 
 ---
 
 ## Quick Start
 
-### 1. Create config.yaml (or edit the existing one)
+### 1. Create or edit `config.yaml`
 
 ```yaml
 global:
@@ -51,12 +145,15 @@ global:
   cut_time: 0
   ffmpeg_codec: "copy"
   auto_restart: true
+  health_check:
+    enabled: true
+    port: 8080
 
 models:
   - name: "model_username"
     platform: "stripchat"
     enabled: true
-    check_interval: 300
+    check_interval: 60
 ```
 
 ### 2. Start recording
@@ -65,31 +162,43 @@ models:
 python3 ctbcap_multi.py start
 ```
 
+### 3. That's it!
+
+CtbCap will monitor all enabled models, start recording when they go online, and stop when they go offline.
+
 ---
 
-## CLI Commands (All Working)
+## CLI Commands
 
 ### `start` — Start Recording All Models
 
-Starts monitoring all enabled models in config.yaml. When a model goes online, it
+Starts monitoring all enabled models in `config.yaml`. When a model goes online, it
 automatically begins recording. When they go offline, recording stops after a grace period.
 
 ```bash
 # Start with default config.yaml
 python3 ctbcap_multi.py start
 
-# Start with custom config file
+# Start with a custom config file
 python3 ctbcap_multi.py start -c /path/to/myconfig.yaml
 
-# Start in background (daemon mode, acquires Termux wake-lock on Android)
+# Start in daemon mode (background, acquires Termux wake-lock on Android)
 python3 ctbcap_multi.py start -D
 
 # Combine daemon mode with custom config
 python3 ctbcap_multi.py start -D -c ./config.yaml
 ```
 
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-c, --config` | Path to config file (default: `./config.yaml`) |
+| `-D, --daemon` | Run as background daemon |
+| `--validate` | Validate config and exit without starting |
+
 **What it does:**
-- Reads all models from config.yaml
+- Reads all models from `config.yaml`
 - Spawns an async monitor for each enabled model
 - Checks the platform API at each model's `check_interval`
 - Starts FFmpeg recording when model is online
@@ -101,7 +210,7 @@ python3 ctbcap_multi.py start -D -c ./config.yaml
 
 ### `stop` — Stop Running Daemon
 
-Sends SIGTERM to a running daemon process via the PID file.
+Sends `SIGTERM` to a running daemon process via the PID file (`ctbcap.pid`).
 
 ```bash
 python3 ctbcap_multi.py stop
@@ -109,15 +218,15 @@ python3 ctbcap_multi.py stop
 
 **What it does:**
 - Reads the PID from `ctbcap.pid`
-- Sends SIGTERM to stop the process cleanly
+- Sends `SIGTERM` to stop the process cleanly
 - Releases Termux wake-lock (on Android)
 - Removes the PID file
 
 ---
 
-### `add` — Add a Single Model to config.yaml
+### `add` — Add a Single Model
 
-Adds a new model entry to your config.yaml file from the command line.
+Adds a new model entry to your `config.yaml` from the command line.
 
 ```bash
 # Add a StripChat model (uses global platform default)
@@ -134,9 +243,13 @@ python3 ctbcap_multi.py add "model_username" -p stripchat \
 
 # Set cut time (0 = continuous, 3600 = 1 hour segments)
 python3 ctbcap_multi.py add "model_username" -p stripchat --cut-time 3600
+
+# Add and immediately start recording (when daemon is running)
+python3 ctbcap_multi.py add "model_username" -p stripchat --start
 ```
 
 **Options:**
+
 | Flag | Description | Default |
 |------|-------------|---------|
 | `name` | Model/username (required) | — |
@@ -144,9 +257,10 @@ python3 ctbcap_multi.py add "model_username" -p stripchat --cut-time 3600
 | `--check-interval` | Seconds between online checks | From global config |
 | `--retry-interval` | Seconds between retry attempts | From global config |
 | `--cut-time` | Segment length in seconds (0=continuous) | From global config |
+| `--start` | Auto-start recording if daemon running | `false` |
 
 **What it does:**
-- Adds a new model entry to the `models:` list in config.yaml
+- Adds a new model entry to the `models:` list in `config.yaml`
 - Auto-generates `save_path` and `log_path` based on global settings
 - If the model already exists, prints a message and does nothing
 
@@ -166,9 +280,13 @@ python3 ctbcap_multi.py add-bulk "user1,user2,user3" -p chaturbate
 # With custom intervals
 python3 ctbcap_multi.py add-bulk "user1,user2,user3" -p stripchat \
   --check-interval 120 --retry-interval 60
+
+# With custom cut time
+python3 ctbcap_multi.py add-bulk "user1,user2,user3" -p stripchat --cut-time 7200
 ```
 
 **Options:**
+
 | Flag | Description | Default |
 |------|-------------|---------|
 | `names` | Comma-separated model names (required) | — |
@@ -185,9 +303,9 @@ Total models in config: 134
 
 ---
 
-### `remove` — Remove a Model from config.yaml
+### `remove` — Remove a Model
 
-Remove a model entry from config.yaml by name.
+Remove a model entry from `config.yaml` by name.
 
 ```bash
 python3 ctbcap_multi.py remove "model_username"
@@ -206,7 +324,7 @@ Removed model 'model_username' from ./config.yaml
 
 ### `list` — List All Configured Models
 
-Display all models in config.yaml, grouped by platform with status.
+Display all models in `config.yaml`, grouped by platform with status.
 
 ```bash
 python3 ctbcap_multi.py list
@@ -280,7 +398,7 @@ python3 ctbcap_multi.py status -V
 
 ---
 
-### `discover` — Discover ALL Online Models
+### `discover` — Discover All Online Models
 
 Scan the platform API to find every currently online model. This is the key feature
 for recording ALL available online models.
@@ -307,13 +425,14 @@ python3 ctbcap_multi.py discover -p stripchat --limit 1000 --auto-add
 ```
 
 **Options:**
+
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--platform, -p` | Platform to scan | From global config |
 | `--limit` | Max models to scan | `500` |
 | `--auto-add, -a` | Auto-add new models to config.yaml | `false` |
 
-**Example output (without --auto-add):**
+**Example output (without `--auto-add`):**
 ```
 Discovering online models on stripchat...
 
@@ -332,7 +451,7 @@ To add all new models, run:
 ======================================================================
 ```
 
-**Example output (with --auto-add):**
+**Example output (with `--auto-add`):**
 ```
 Discovering online models on stripchat...
 
@@ -352,15 +471,15 @@ Added 35 models to ./config.yaml
 1. Queries the platform's public API endpoint to get lists of online models
 2. Paginates through results (100 per batch) until `--limit` is reached
 3. Filters models that have active cam status
-4. Compares against existing models in config.yaml
-5. With `--auto-add`, appends new models directly to config.yaml
+4. Compares against existing models in `config.yaml`
+5. With `--auto-add`, appends new models directly to `config.yaml`
 6. You can then start/reload to begin recording the new models
 
 ---
 
 ### `dedup` — Remove Duplicate Models
 
-Find and remove duplicate model entries in config.yaml (same name appearing multiple times).
+Find and remove duplicate model entries in `config.yaml` (same name appearing multiple times).
 
 ```bash
 python3 ctbcap_multi.py dedup
@@ -375,7 +494,7 @@ Removed 4 duplicate entries (135 -> 131 models)
 
 ### `validate` — Validate Config File
 
-Check that config.yaml is valid and list all models.
+Check that `config.yaml` is valid and list all models.
 
 ```bash
 python3 ctbcap_multi.py --validate
@@ -393,6 +512,7 @@ Enabled models (131): ['Ada-19', 'Priyanka011', ...]
 
 ```bash
 python3 ctbcap_multi.py --version
+python3 ctbcap_multi.py -v
 ```
 
 **Output:**
@@ -605,20 +725,27 @@ models:
 
 ## Health Server API
 
-When `health_check.enabled: true`, CtbCap runs an HTTP server on the configured port (default 8080).
+When `health_check.enabled: true`, CtbCap runs an HTTP server on the configured port (default `8080`).
 
 ### Endpoints
 
 | Method | URL | Description |
 |--------|-----|-------------|
-| GET | `/health` | Liveness check (always returns 200) |
-| GET | `/status` | Full status: all recordings, monitors, bandwidth |
-| GET | `/recordings` | Active recording details with bandwidth stats |
-| GET | `/metrics` | Prometheus-format metrics |
-| POST | `/control/{model}/stop` | Stop recording a specific model |
-| POST | `/control/stop-all` | Stop all recordings |
-| POST | `/control/reload-config` | Hot-reload config.yaml |
-| POST | `/control/discover?platform=stripchat` | Discover online models via API |
+| `GET` | `/health` | Liveness check (always returns 200) |
+| `GET` | `/status` | Full status: all recordings, monitors, bandwidth |
+| `GET` | `/recordings` | Active recording details with bandwidth stats |
+| `GET` | `/metrics` | Prometheus-format metrics |
+| `POST` | `/control/{model}/stop` | Stop recording a specific model |
+| `POST` | `/control/stop-all` | Stop all recordings |
+| `POST` | `/control/reload-config` | Hot-reload config.yaml |
+| `POST` | `/control/discover?platform=stripchat` | Discover online models via API |
+| `POST` | `/control/add` | Add a model (JSON body: `{"name": "...", "platform": "..."}`) |
+
+### Example: Health Check
+
+```bash
+curl http://localhost:8080/health
+```
 
 ### Example: Check Status
 
@@ -626,10 +753,28 @@ When `health_check.enabled: true`, CtbCap runs an HTTP server on the configured 
 curl http://localhost:8080/status | python3 -m json.tool
 ```
 
-### Example: Stop a Model
+### Example: Get Active Recordings
+
+```bash
+curl http://localhost:8080/recordings | python3 -m json.tool
+```
+
+### Example: Get Prometheus Metrics
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+### Example: Stop a Specific Model
 
 ```bash
 curl -X POST http://localhost:8080/control/my_model/stop
+```
+
+### Example: Stop All Recordings
+
+```bash
+curl -X POST http://localhost:8080/control/stop-all
 ```
 
 ### Example: Reload Config
@@ -644,9 +789,17 @@ curl -X POST http://localhost:8080/control/reload-config
 curl -X POST "http://localhost:8080/control/discover?platform=stripchat"
 ```
 
+### Example: Add a Model via API
+
+```bash
+curl -X POST http://localhost:8080/control/add \
+  -H "Content-Type: application/json" \
+  -d '{"name": "model_username", "platform": "stripchat"}'
+```
+
 ---
 
-## Signals
+## Signal Handling
 
 | Signal | Action |
 |--------|--------|
@@ -655,9 +808,28 @@ curl -X POST "http://localhost:8080/control/discover?platform=stripchat"
 | `SIGUSR1` | Stop health server |
 | `SIGUSR2` | Start health server |
 
-**Send SIGHUP to reload config without restarting:**
+### Send SIGHUP to reload config without restarting:
+
 ```bash
 kill -HUP $(cat ctbcap.pid)
+```
+
+### Stop health server:
+
+```bash
+kill -USR1 $(cat ctbcap.pid)
+```
+
+### Start health server:
+
+```bash
+kill -USR2 $(cat ctbcap.pid)
+```
+
+### Graceful shutdown:
+
+```bash
+kill -TERM $(cat ctbcap.pid)
 ```
 
 ---
@@ -702,6 +874,9 @@ python3 ctbcap_multi.py tmux-attach
 
 # Detach without stopping (press Ctrl+B then D)
 
+# Check status from another terminal
+python3 ctbcap_multi.py status
+
 # Stop everything
 python3 ctbcap_multi.py tmux-stop
 ```
@@ -709,7 +884,7 @@ python3 ctbcap_multi.py tmux-stop
 ### Workflow 4: Run as Daemon
 
 ```bash
-# Start in background (Termux wake-lock acquired)
+# Start in background (Termux wake-lock acquired on Android)
 python3 ctbcap_multi.py start -D
 
 # Check status
@@ -730,17 +905,48 @@ python3 ctbcap_multi.py add "cb_model2" -p chaturbate
 python3 ctbcap_multi.py add "sc_model1" -p stripchat
 python3 ctbcap_multi.py add "sc_model2" -p stripchat
 
-# Start - it records from both platforms simultaneously
+# Start - records from both platforms simultaneously
 python3 ctbcap_multi.py start
 ```
 
-### Workflow 6: Periodic Auto-Discovery Cron Job
+### Workflow 6: Periodic Auto-Discovery (Cron Job)
 
 Set up a cron job to periodically discover and add new online models:
 
 ```bash
-# Run every 6 hours to discover and add new StripChat models
+# Edit crontab
+crontab -e
+
+# Add this line to run every 6 hours:
 0 */6 * * * cd /path/to/p07n && python3 ctbcap_multi.py discover -p stripchat --auto-add >> /var/log/ctbcap_discover.log 2>&1
+```
+
+### Workflow 7: Hot-Reload Config Changes
+
+```bash
+# Edit config.yaml to add/remove models
+nano config.yaml
+
+# Reload without restarting (if daemon is running)
+kill -HUP $(cat ctbcap.pid)
+
+# Or reload via health server API
+curl -X POST http://localhost:8080/control/reload-config
+```
+
+### Workflow 8: Manage Models via Health Server
+
+```bash
+# Add a model and auto-start recording
+curl -X POST http://localhost:8080/control/add \
+  -H "Content-Type: application/json" \
+  -d '{"name": "new_model", "platform": "stripchat"}'
+
+# Stop a specific model
+curl -X POST http://localhost:8080/control/some_model/stop
+
+# Stop all recordings
+curl -X POST http://localhost:8080/control/stop-all
 ```
 
 ---
@@ -763,40 +969,139 @@ ctbcap_rec/
 
 **File naming:** `<model>-<YYYYMMDD>-<HHMMSS>.mp4`
 
+**Example:**
+```
+ctbcap_rec/
+├── log/
+│   ├── ctbcap.log
+│   └── metadata.jsonl
+├── 4u4Love/
+│   ├── 4u4Love-20260716-143000.mp4
+│   └── 4u4Love-20260716-180000.mp4
+├── Ada-19/
+│   └── Ada-19-20260716-201500.mp4
+└── ...
+```
+
+---
+
+## Shell Script (ctbcap) — Single Model Recorder
+
+The project also includes a legacy POSIX shell script (`ctbcap` v4.0-r10) for recording a **single model** at a time.
+
+### Usage
+
+```bash
+# Record a model by username (default: Chaturbate)
+./ctbcap <username>
+
+# Record from a specific platform
+./ctbcap -p chaturbate <username>
+./ctbcap -p stripchat <username>
+
+# Cut segments every 3600 seconds (1 hour)
+./ctbcap -c 3600 <username>
+
+# Debug mode (verbose output)
+./ctbcap -d <username>
+
+# Edging mode (random delay before first check)
+./ctbcap -e <username>
+
+# Link mode (only grab stream URL, don't record)
+./ctbcap -l <username>
+
+# Show help
+./ctbcap -h
+
+# Show version
+./ctbcap -v
+```
+
+### Shell Script Options
+
+| Flag | Description |
+|------|-------------|
+| `-p <platform>` | Platform: `chaturbate` or `stripchat` (default: `chaturbate`) |
+| `-c <seconds>` | Cut recording every N seconds (default: 3600) |
+| `-d` | Debug mode (verbose output) |
+| `-e` | Edging mode (random delay to avoid detection) |
+| `-l` | Link mode (only grab stream URL) |
+| `-h` | Show help |
+| `-v` | Show version |
+
+### Shell Script Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SAVE_PATH` | `$PWD/ctbcap_rec` | Recording output path |
+| `SAVE_PATH_SPACE` | `512` | Required free disk space (MiB) |
+| `LOG_PATH` | `$SAVE_PATH/log` | Log files path |
+| `LOG_PATH_SPACE` | `16` | Required log disk space (MiB) |
+| `PLATFORM` | `chaturbate` | Platform (`chaturbate` or `stripchat`) |
+| `CUT_TIME` | `3600` | Segment duration in seconds |
+| `UA` | Chrome user agent | User-Agent header |
+| `EDGING_MODE` | inactive | Random delay before first check |
+| `DEBUG_MODE` | inactive | Debug output |
+| `RECORDING_IGNORE_PROXY` | inactive | Ignore system proxy |
+| `LINK_MODE` | inactive | Only grab stream URL |
+| `NOBANNER` | inactive | Suppress banner |
+| `BANNER` | inactive | Show only banner |
+
+### Shell Script Examples
+
+```bash
+# Set environment variables and record
+PLATFORM=stripchat CUT_TIME=7200 ./ctbcap model_name
+
+# Record from Chaturbate with debug mode
+DEBUG_MODE=1 ./ctbcap -p chaturbate model_name
+
+# Record to a custom path
+SAVE_PATH=/external/storage/recordings ./ctbcap model_name
+```
+
 ---
 
 ## Troubleshooting
 
 ### "Config file not found"
+
 ```bash
 # Make sure you're in the right directory or specify the path
 python3 ctbcap_multi.py start -c /full/path/to/config.yaml
 ```
 
 ### "No models configured"
+
 ```bash
 # Add at least one model
 python3 ctbcap_multi.py add "model_name" -p stripchat
 ```
 
 ### "Cannot connect to health server"
+
 ```bash
 # CtbCap is not running. Start it first:
 python3 ctbcap_multi.py start
+
+# Or check if health_check is enabled in config.yaml
 ```
 
 ### FFmpeg not found
+
 ```bash
-# Verify ffmpeg is installed
+# Verify ffmpeg is installed and in PATH
 which ffmpeg
 
-# Install if missing
+# Install if missing:
 # Termux:  pkg install ffmpeg
 # macOS:   brew install ffmpeg
 # Ubuntu:  sudo apt install ffmpeg
 ```
 
 ### Permission errors on Termux
+
 ```bash
 # Acquire wake-lock to prevent CPU sleep
 termux-wake-lock
@@ -806,12 +1111,14 @@ termux-setup-storage
 ```
 
 ### Duplicate models warning
+
 ```bash
 # Clean up duplicates
 python3 ctbcap_multi.py dedup
 ```
 
 ### Model shows as "already recording" but isn't
+
 ```bash
 # Stop the stuck recording via health server
 curl -X POST http://localhost:8080/control/model_name/stop
@@ -820,3 +1127,47 @@ curl -X POST http://localhost:8080/control/model_name/stop
 python3 ctbcap_multi.py stop
 python3 ctbcap_multi.py start
 ```
+
+### Daemon won't stop
+
+```bash
+# Check if PID file exists
+cat ctbcap.pid
+
+# Kill by PID directly
+kill -TERM $(cat ctbcap.pid)
+
+# Force kill if needed
+kill -9 $(cat ctbcap.pid)
+rm -f ctbcap.pid
+```
+
+### High CPU usage
+
+```bash
+# Reduce check frequency in config.yaml
+check_interval: 300   # Check every 5 minutes instead of 60 seconds
+
+# Reduce concurrent downloads
+download_queue:
+  max_concurrent_downloads: 2
+  max_concurrent_fetches: 3
+```
+
+### Disk space issues
+
+```bash
+# Check available disk space
+df -h
+
+# Increase minimum free space threshold in config.yaml
+save_space_mib: 1024
+download_queue:
+  min_free_space_mib: 2048
+```
+
+---
+
+## License
+
+Licensed under the GNU General Public License v3.0 (GPLv3).

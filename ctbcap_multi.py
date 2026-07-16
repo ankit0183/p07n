@@ -689,8 +689,8 @@ class BandwidthMonitor:
             stat['total_bytes'] = size
             return {
                 'bytes': size,
-                'speed_bps': stat['current_speed'],
-                'peak_bps': stat['peak_speed'],
+                #'speed_bps': stat['current_speed'],
+               #'peak_bps': stat['peak_speed'],
                 'duration': now - stat['start_time'],
             }
         except OSError:
@@ -919,7 +919,7 @@ class Recorder:
                 bw_stats = self.bandwidth_monitor.unregister(model_name)
 
                 self.metadata_logger.log_event(model_name, "recording_stopped", {
-                    "duration_seconds": duration,
+                   
                     "return_code": return_code,
                     "stderr": stderr_text,
                     "total_bytes": bw_stats['total_bytes'] if bw_stats else 0,
@@ -1035,8 +1035,8 @@ class Recorder:
             }
             if bw:
                 stats[name]['size_bytes'] = bw['bytes']
-                stats[name]['speed'] = self.bandwidth_monitor.format_speed(bw['speed_bps'])
-                stats[name]['peak_speed'] = self.bandwidth_monitor.format_speed(bw['peak_bps'])
+                #stats[name]['speed'] = self.bandwidth_monitor.format_speed(bw['speed_bps'])
+                #stats[name]['peak_speed'] = self.bandwidth_monitor.format_speed(bw['peak_bps'])
         return stats
 
 # ========================
@@ -1163,6 +1163,7 @@ class HealthServer:
         self.app.router.add_post('/control/stop-all', self.stop_all_handler)
         self.app.router.add_post('/control/reload-config', self.reload_config_handler)
         self.app.router.add_post('/control/discover', self.discover_handler)
+        self.app.router.add_post('/control/add', self.add_model_handler)
 
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
@@ -1191,7 +1192,7 @@ class HealthServer:
             }
             if bw:
                 entry['size_bytes'] = bw['bytes']
-                entry['speed'] = self.recorder.bandwidth_monitor.format_speed(bw['speed_bps'])
+                #entry['speed'] = self.recorder.bandwidth_monitor.format_speed(bw['speed_bps'])
             sessions[name] = entry
 
         monitors = {}
@@ -1251,6 +1252,41 @@ class HealthServer:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def add_model_handler(self, request):
+        try:
+            data = await request.json()
+            name = data.get('name')
+            if not name:
+                return web.json_response({"error": "name is required"}, status=400)
+            platform = data.get('platform', self.ctbcap_app.config.global_.platform)
+            if platform not in ('chaturbate', 'stripchat'):
+                return web.json_response({"error": f"Unknown platform: {platform}"}, status=400)
+            existing_names = {m.model.name for m in self.monitors}
+            if name in existing_names:
+                return web.json_response({"error": f"Model '{name}' already monitored"}, status=409)
+            mgr = ConfigManager(self.ctbcap_app.config_path)
+            if not mgr.add_model(name, platform=platform):
+                return web.json_response({"error": f"Model '{name}' already in config"}, status=409)
+            new_config = Config.from_yaml(self.ctbcap_app.config_path)
+            model_cfg = next((m for m in new_config.models if m.name == name), None)
+            if not model_cfg:
+                return web.json_response({"error": "Failed to load model from config"}, status=500)
+            monitor = ModelMonitor(
+                model=model_cfg,
+                global_config=self.ctbcap_app.config.global_,
+                platform_client=self.ctbcap_app.platform_client,
+                recorder=self.ctbcap_app.recorder,
+                metadata_logger=self.ctbcap_app.metadata_logger,
+                notifications=self.ctbcap_app.notifications,
+                download_queue=self.ctbcap_app.download_queue,
+            )
+            self.monitors.append(monitor)
+            asyncio.create_task(monitor.run())
+            self.ctbcap_app.config = new_config
+            return web.json_response({"status": "added", "model": name, "platform": platform, "auto_started": True})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     async def metrics_handler(self, request):
         lines = [
             f"ctbcap_recordings_active {len(self.recorder.sessions)}",
@@ -1260,11 +1296,11 @@ class HealthServer:
             f"ctbcap_monitors_offline {sum(1 for m in self.monitors if m.last_status == 'offline')}",
         ]
         for name, session in self.recorder.sessions.items():
-            lines.append(f'ctbcap_recording_duration_seconds{{model="{name}"}} {time.time() - session.start_time:.0f}')
-            bw = self.recorder.bandwidth_monitor.update(name)
-            if bw:
-                lines.append(f'ctbcap_recording_bytes{{model="{name}"}} {bw["bytes"]}')
-                lines.append(f'ctbcap_recording_speed_bps{{model="{name}"}} {bw["speed_bps"]:.0f}')
+            elapsed = int(time.time() - session.start_time)
+            hours, remainder = divmod(elapsed, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            lines.append(f'ctbcap_recording_duration{{model="{name}"}} "{duration_str}"')
         return web.Response(text='\n'.join(lines) + '\n', content_type='text/plain')
 
 # ========================
@@ -1542,14 +1578,43 @@ class TmuxManager:
 # CLI Commands
 # ========================
 
+def _try_start_model(config_path: str, name: str, platform: str = None):
+    """Try to auto-start a model via the running health server."""
+    import urllib.request
+    import json as json_mod
+    config = Config.from_yaml(config_path)
+    port = config.global_.health_check.port
+    url = f'http://localhost:{port}/control/add'
+    payload = {"name": name}
+    if platform:
+        payload["platform"] = platform
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json_mod.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            result = json_mod.loads(resp.read())
+            print(f"  Auto-started recording for '{name}'")
+            return True
+    except urllib.error.URLError:
+        print(f"  Daemon not running - model will be recorded on next 'start'")
+        return False
+    except Exception as e:
+        print(f"  Warning: Could not auto-start '{name}': {e}")
+        return False
+
 def cmd_add(args, config_path: str):
-    """Add a model to config.yaml."""
+    """Add a model to config.yaml, optionally auto-start recording."""
     mgr = ConfigManager(config_path)
     name = args.name
     platform = args.platform
     check_interval = args.check_interval
     retry_interval = args.retry_interval
     cut_time = args.cut_time
+    auto_start = getattr(args, 'start', False)
 
     if mgr.add_model(name, platform=platform, check_interval=check_interval,
                      retry_interval=retry_interval, cut_time=cut_time):
@@ -1561,6 +1626,8 @@ def cmd_add(args, config_path: str):
             print(f"  Retry interval: {retry_interval}s")
         if cut_time:
             print(f"  Cut time: {cut_time}s")
+        if auto_start:
+            _try_start_model(config_path, name, platform)
     else:
         print(f"Model '{name}' already exists in config")
         return 1
@@ -1574,6 +1641,7 @@ def cmd_add_bulk(args, config_path: str):
         print("No model names provided")
         return 1
 
+    auto_start = getattr(args, 'start', False)
     models_list = []
     for name in names:
         models_list.append({
@@ -1588,6 +1656,9 @@ def cmd_add_bulk(args, config_path: str):
     print(f"Added {added} new models ({len(names) - added} already existed)")
     if added > 0:
         print(f"Total models in config: {len(mgr.list_models())}")
+    if auto_start and added > 0:
+        for name in names:
+            _try_start_model(config_path, name, args.platform)
     return 0
 
 def cmd_remove(args, config_path: str):
@@ -1799,7 +1870,9 @@ Examples:
   %(prog)s start -c myconfig.yaml         Start with custom config
   %(prog)s start -D                       Start as daemon (background)
   %(prog)s add mymodel --platform stripchat   Add a model to config
+  %(prog)s add mymodel --platform stripchat --start   Add and auto-start recording
   %(prog)s add-bulk "name1,name2,name3" --platform stripchat   Add multiple models
+  %(prog)s add-bulk "name1,name2" --start --platform stripchat   Add and auto-start
   %(prog)s remove mymodel                 Remove a model from config
   %(prog)s list                           List all configured models
   %(prog)s status                         Show live recording status
@@ -1826,6 +1899,7 @@ Examples:
     sub_add.add_argument('--check-interval', type=int, help='Check interval in seconds')
     sub_add.add_argument('--retry-interval', type=int, help='Retry interval in seconds')
     sub_add.add_argument('--cut-time', type=int, help='Cut time in seconds (0=continuous)')
+    sub_add.add_argument('--start', '-s', action='store_true', help='Auto-start recording immediately')
     sub_add.set_defaults(func=cmd_add)
 
     sub_bulk = subparsers.add_parser('add-bulk', help='Add multiple models at once')
@@ -1834,6 +1908,7 @@ Examples:
     sub_bulk.add_argument('--check-interval', type=int, help='Check interval in seconds')
     sub_bulk.add_argument('--retry-interval', type=int, help='Retry interval in seconds')
     sub_bulk.add_argument('--cut-time', type=int, help='Cut time in seconds')
+    sub_bulk.add_argument('--start', '-s', action='store_true', help='Auto-start recording immediately')
     sub_bulk.set_defaults(func=cmd_add_bulk)
 
     sub_remove = subparsers.add_parser('remove', help='Remove a model from config.yaml')

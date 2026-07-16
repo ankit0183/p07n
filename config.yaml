@@ -1053,14 +1053,6 @@ models:
   check_interval: 300
   retry_interval: 180
   cut_time: 0
-- name: ranii2
-  platform: stripchat
-  save_path: ./ctbcap_rec/ranii2
-  log_path: ./ctbcap_rec/log/ranii2
-  enabled: true
-  check_interval: 300
-  retry_interval: 180
-  cut_time: 0
 - name: xloe_queen
   platform: chaturbate
   save_path: ./ctbcap_rec/xloe_queen
@@ -1092,4 +1084,44 @@ models:
   enabled: true
   check_interval: 300
   retry_interval: 180
+  cut_time: 0
+- name: disha-vibes
+  platform: stripchat
+  save_path: ./ctbcap_rec/disha-vibes
+  log_path: ./ctbcap_rec/log/disha-vibes
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: nossy_97
+  platform: stripchat
+  save_path: ./ctbcap_rec/nossy_97
+  log_path: ./ctbcap_rec/log/nossy_97
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: haryanvi-monika
+  platform: stripchat
+  save_path: ./ctbcap_rec/haryanvi-monika
+  log_path: ./ctbcap_rec/log/haryanvi-monika
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: heer_ranjha_couple
+  platform: stripchat
+  save_path: ./ctbcap_rec/heer_ranjha_couple
+  log_path: ./ctbcap_rec/log/heer_ranjha_couple
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: mirikiteki
+  platform: stripchat
+  save_path: ./ctbcap_rec/mirikiteki
+  log_path: ./ctbcap_rec/log/mirikiteki
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
   cut_time: 0
