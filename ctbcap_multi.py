@@ -241,6 +241,19 @@ class TermuxHelper:
             pass
 
     @staticmethod
+    def ongoing_notification(title: str, content: str, id_: str = "ctbcap-ongoing"):
+        if not IS_TERMUX:
+            return
+        try:
+            subprocess.run(
+                ['termux-notification', '--id', id_, '--title', title, '--content', content,
+                 '--priority', 'low', '--ongoing'],
+                capture_output=True, timeout=5
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    @staticmethod
     def remove_notification(id_: str = "ctbcap"):
         if not IS_TERMUX:
             return
@@ -724,6 +737,7 @@ class Recorder:
 
             TermuxHelper.notification(f"Recording: {model.name}", f"Started on {model.platform}", f"rec-{model.name}")
             TermuxHelper.vibrate(200)
+            TermuxHelper.ongoing_notification("CtbCap Daemon", f"Active recordings: {len(self.sessions)}")
 
             asyncio.create_task(self._monitor_process(model, process))
             self._start_stall_monitor(model.name)
@@ -808,6 +822,7 @@ class Recorder:
                 await self.stats.record_done(model_name, duration, output_file)
 
                 del self.sessions[model_name]
+                TermuxHelper.ongoing_notification("CtbCap Daemon", f"Active recordings: {len(self.sessions)}")
 
             if model_name in self._stall_tasks:
                 self._stall_tasks[model_name].cancel()
@@ -1272,6 +1287,7 @@ class CtbCap:
         self.logger.info("Shutdown complete")
 
         TermuxHelper.wake_lock(False)
+        TermuxHelper.remove_notification("ctbcap-ongoing")
         _remove_pid()
 
 # ========================
@@ -1354,10 +1370,13 @@ def daemon_start():
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
+    # Ongoing notification prevents Android from killing the Termux app
+    TermuxHelper.ongoing_notification("CtbCap Daemon", "Recording daemon active — will not be killed")
+
     _write_pid()
 
     # Register cleanup in THIS process (grandchild), not the parent
-    atexit.register(lambda: (TermuxHelper.wake_lock(False), _remove_pid()))
+    atexit.register(lambda: (TermuxHelper.wake_lock(False), TermuxHelper.remove_notification("ctbcap-ongoing"), _remove_pid()))
 
 def daemon_stop():
     pid = _read_pid()
