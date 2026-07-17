@@ -1174,3 +1174,11 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+- name: Fiza__khan
+  platform: stripchat
+  save_path: ./ctbcap_rec/Fiza__khan
+  log_path: ./ctbcap_rec/log/Fiza__khan
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
