@@ -1125,3 +1125,52 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+
+- name: sexy_soft_heart19
+  platform: stripchat
+  save_path: ./ctbcap_rec/sexy_soft_heart19
+  log_path: ./ctbcap_rec/log/sexy_soft_heart19
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: babynyraa
+  platform: stripchat
+  save_path: ./ctbcap_rec/babynyraa
+  log_path: ./ctbcap_rec/log/babynyraa
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: marathi_dolly
+  platform: stripchat
+  save_path: ./ctbcap_rec/marathi_dolly
+  log_path: ./ctbcap_rec/log/marathi_dolly
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: LaynePingitore
+  platform: stripchat
+  save_path: ./ctbcap_rec/LaynePingitore
+  log_path: ./ctbcap_rec/log/LaynePingitore
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: HanneloreChemell
+  platform: stripchat
+  save_path: ./ctbcap_rec/HanneloreChemell
+  log_path: ./ctbcap_rec/log/HanneloreChemell
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Ailynice
+  platform: stripchat
+  save_path: ./ctbcap_rec/Ailynice
+  log_path: ./ctbcap_rec/log/Ailynice
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
