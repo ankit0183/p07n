@@ -1182,3 +1182,14 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+- name: magdalenebirdtail
+  platform: chaturbate
+  save_path: ./ctbcap_rec/magdalenebirdtail
+  log_path: ./ctbcap_rec/log/magdalenebirdtail
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+
+  
