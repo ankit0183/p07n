@@ -1190,10 +1190,18 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-- name: mailin_harrrington
+- name: mailin_harrington
   platform: stripchat
-  save_path: ./ctbcap_rec/mailin_harrrington
-  log_path: ./ctbcap_rec/log/mailin_harrrington
+  save_path: ./ctbcap_rec/mailin_harrington
+  log_path: ./ctbcap_rec/log/mailin_harrington
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: sayana_shrma
+  platform: stripchat
+  save_path: ./ctbcap_rec/sayana_shrma
+  log_path: ./ctbcap_rec/log/sayana_shrma
   enabled: true
   check_interval: 60
   retry_interval: 60
