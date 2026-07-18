@@ -1207,4 +1207,13 @@ models:
   retry_interval: 60
   cut_time: 0
 
+- name: rashmihotstudent
+  platform: stripchat
+  save_path: ./ctbcap_rec/rashmihotstudent
+  log_path: ./ctbcap_rec/log/rashmihotstudent
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
   
