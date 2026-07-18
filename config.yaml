@@ -1233,3 +1233,12 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+- name: its_anjali
+  platform: stripchat
+  save_path: ./ctbcap_rec/its_anjali
+  log_path: ./ctbcap_rec/log/its_anjali
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
