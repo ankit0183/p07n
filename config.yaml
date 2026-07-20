@@ -1260,5 +1260,15 @@ models:
   retry_interval: 60
   cut_time: 0
 
+  
+- name: noty_gulnaaz
+  platform: stripchat
+  save_path: ./ctbcap_rec/noty_gulnaaz
+  log_path: ./ctbcap_rec/log/noty_gulnaaz
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
 
 
