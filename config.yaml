@@ -1251,3 +1251,14 @@ models:
   retry_interval: 60
   cut_time: 0
 
+- name: hye__manvi_
+  platform: stripchat
+  save_path: ./ctbcap_rec/hye__manvi_
+  log_path: ./ctbcap_rec/log/hye__manvi_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+
+
