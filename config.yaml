@@ -1297,4 +1297,12 @@ models:
   retry_interval: 60
   cut_time: 0
 
-
+- name : missruhihot
+  platform: stripchat
+  save_path: ./ctbcap_rec/missruhihot
+  log_path: ./ctbcap_rec/log/missruhihot
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+ 
