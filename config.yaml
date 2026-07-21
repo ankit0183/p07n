@@ -1324,3 +1324,12 @@ models:
   check_interval: 300
   retry_interval: 180
   cut_time: 0
+
+- name : Moody_1999
+  platform: stripchat
+  save_path: ./ctbcap_rec/Moody_1999
+  log_path: ./ctbcap_rec/log/Moody_1999
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
