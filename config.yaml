@@ -1125,7 +1125,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: sexy_soft_heart19
   platform: stripchat
   save_path: ./ctbcap_rec/sexy_soft_heart19
@@ -1206,7 +1205,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: rashmihotstudent
   platform: stripchat
   save_path: ./ctbcap_rec/rashmihotstudent
@@ -1215,7 +1213,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: isha-19
   platform: stripchat
   save_path: ./ctbcap_rec/isha-19
@@ -1224,7 +1221,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: suneeta077
   platform: stripchat
   save_path: ./ctbcap_rec/suneeta077
@@ -1241,7 +1237,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: Yours-ira
   platform: stripchat
   save_path: ./ctbcap_rec/Yours-ira
@@ -1250,7 +1245,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: hye__manvi_
   platform: stripchat
   save_path: ./ctbcap_rec/hye__manvi_
@@ -1259,8 +1253,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
-  
 - name: noty_gulnaaz
   platform: stripchat
   save_path: ./ctbcap_rec/noty_gulnaaz
@@ -1269,6 +1261,11 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
-
-
+- name: Sexy_sanaya-
+  platform: stripchat
+  save_path: ./ctbcap_rec/Sexy_sanaya-
+  log_path: ./ctbcap_rec/log/Sexy_sanaya-
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
