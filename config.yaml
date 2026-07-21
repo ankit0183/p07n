@@ -1272,11 +1272,20 @@ models:
 
 - name : Ani77880
   platform: stripchat
-  save_path: ./ctbcap_rec/Sexy_sanaya-
-  log_path: ./ctbcap_rec/log/Sexy_sanaya-
+  save_path: ./ctbcap_rec/Ani77880-
+  log_path: ./ctbcap_rec/log/Ani77880-
   enabled: true
   check_interval: 60
   retry_interval: 60
   cut_time: 0
 
-  
+- name : Nandundi
+  platform: stripchat
+  save_path: ./ctbcap_rec/Nandundi
+  log_path: ./ctbcap_rec/log/Nandundi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+
