@@ -1269,3 +1269,14 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+
+- name : Ani77880
+  platform: stripchat
+  save_path: ./ctbcap_rec/Sexy_sanaya-
+  log_path: ./ctbcap_rec/log/Sexy_sanaya-
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+  
