@@ -1333,3 +1333,11 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+- name: alisha_queen55
+  platform: stripchat
+  save_path: ./ctbcap_rec/alisha_queen55
+  log_path: ./ctbcap_rec/log/alisha_queen55
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
