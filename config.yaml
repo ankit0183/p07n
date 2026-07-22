@@ -1054,7 +1054,7 @@ models:
   retry_interval: 180
   cut_time: 0
 - name: komal_sharma-
-  platform: chaturbate
+  platform: stripchat
   save_path: ./ctbcap_rec/komal_sharma
   log_path: ./ctbcap_rec/log/komal_sharma
   enabled: true
