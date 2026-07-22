@@ -1369,3 +1369,12 @@ models:
   retry_interval: 60
   cut_time: 0
 
+- name: mahi_thakur0
+  platform: stripchat
+  save_path: ./ctbcap_rec/mahi_thakur0
+  log_path: ./ctbcap_rec/log/mahi_thakur0
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
