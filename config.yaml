@@ -1351,3 +1351,12 @@ models:
   retry_interval: 60
   cut_time: 0
 
+- name: bitchhin__00
+  platform: stripchat
+  save_path: ./ctbcap_rec/bitchhin__00
+  log_path: ./ctbcap_rec/log/bitchhin__00
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
