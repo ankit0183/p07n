@@ -1261,8 +1261,7 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
-- name : Ani77880
+- name: Ani77880
   platform: stripchat
   save_path: ./ctbcap_rec/Ani77880-
   log_path: ./ctbcap_rec/log/Ani77880-
@@ -1270,8 +1269,7 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
-- name : Nandundi
+- name: Nandundi
   platform: stripchat
   save_path: ./ctbcap_rec/Nandundi
   log_path: ./ctbcap_rec/log/Nandundi
@@ -1279,8 +1277,7 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
-- name : Ceromi_0
+- name: Ceromi_0
   platform: stripchat
   save_path: ./ctbcap_rec/Ceromi_0
   log_path: ./ctbcap_rec/log/Ceromi_0
@@ -1288,8 +1285,7 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
-- name : missruhihot
+- name: missruhihot
   platform: stripchat
   save_path: ./ctbcap_rec/missruhihot
   log_path: ./ctbcap_rec/log/missruhihot
@@ -1297,8 +1293,7 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
- 
-- name : Missdelhii
+- name: Missdelhii
   platform: stripchat
   save_path: ./ctbcap_rec/Missdelhii
   log_path: ./ctbcap_rec/log/Missdelhii
@@ -1306,8 +1301,7 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
-- name : Amira-school
+- name: Amira-school
   platform: stripchat
   save_path: ./ctbcap_rec/Amira-school
   log_path: ./ctbcap_rec/log/Amira-school
@@ -1315,7 +1309,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: mysat
   platform: chaturbate
   save_path: ./ctbcap_rec/mysat
@@ -1324,11 +1317,18 @@ models:
   check_interval: 300
   retry_interval: 180
   cut_time: 0
-
-- name : Moody_1999
+- name: Moody_1999
   platform: stripchat
   save_path: ./ctbcap_rec/Moody_1999
   log_path: ./ctbcap_rec/log/Moody_1999
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: lakshmimodel
+  platform: stripchat
+  save_path: ./ctbcap_rec/lakshmimodel
+  log_path: ./ctbcap_rec/log/lakshmimodel
   enabled: true
   check_interval: 60
   retry_interval: 60
