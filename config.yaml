@@ -1378,3 +1378,12 @@ models:
   retry_interval: 60
   cut_time: 0
 
+- name: sexy-pari1
+  platform: stripchat
+  save_path: ./ctbcap_rec/sexy-pari1
+  log_path: ./ctbcap_rec/log/sexy-pari1
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
