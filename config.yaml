@@ -1387,3 +1387,12 @@ models:
   retry_interval: 60
   cut_time: 0
 
+- name: Ridhima_Shrma
+  platform: stripchat
+  save_path: ./ctbcap_rec/Ridhima_Shrma
+  log_path: ./ctbcap_rec/log/Ridhima_Shrma
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
