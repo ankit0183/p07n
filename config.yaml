@@ -1396,3 +1396,24 @@ models:
   retry_interval: 60
   cut_time: 0
 
+- name: ru_hi
+  platform: stripchat
+  save_path: ./ctbcap_rec/ru_hi
+  log_path: ./ctbcap_rec/log/ru_hi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: sonam_sexy01
+  platform: stripchat
+  save_path: ./ctbcap_rec/sonam_sexy01
+  log_path: ./ctbcap_rec/log/sonam_sexy01
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+  
+
+  
