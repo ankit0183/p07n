@@ -1414,6 +1414,23 @@ models:
   retry_interval: 60
   cut_time: 0
 
-  
+- name: Bold-Maya
+  platform: stripchat
+  save_path: ./ctbcap_rec/Bold-Maya
+  log_path: ./ctbcap_rec/log/Bold-Maya
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+
+- name: Dominate_Daddy
+  platform: stripchat
+  save_path: ./ctbcap_rec/Dominate_Daddy
+  log_path: ./ctbcap_rec/log/Dominate_Daddy
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
 
   
