@@ -1341,7 +1341,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: Sonam_sexy01
   platform: stripchat
   save_path: ./ctbcap_rec/Sonam_sexy01
@@ -1350,7 +1349,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: bitchhin__00
   platform: stripchat
   save_path: ./ctbcap_rec/bitchhin__00
@@ -1359,7 +1357,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: Ru_hi
   platform: stripchat
   save_path: ./ctbcap_rec/Ru_hi
@@ -1368,7 +1365,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: mahi_thakur0
   platform: stripchat
   save_path: ./ctbcap_rec/mahi_thakur0
@@ -1377,7 +1373,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: sexy-pari1
   platform: stripchat
   save_path: ./ctbcap_rec/sexy-pari1
@@ -1386,7 +1381,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: Ridhima_Shrma
   platform: stripchat
   save_path: ./ctbcap_rec/Ridhima_Shrma
@@ -1395,7 +1389,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: ru_hi
   platform: stripchat
   save_path: ./ctbcap_rec/ru_hi
@@ -1404,7 +1397,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: sonam_sexy01
   platform: stripchat
   save_path: ./ctbcap_rec/sonam_sexy01
@@ -1413,7 +1405,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
 - name: Bold-Maya
   platform: stripchat
   save_path: ./ctbcap_rec/Bold-Maya
@@ -1422,8 +1413,6 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
-
 - name: Dominate_Daddy
   platform: stripchat
   save_path: ./ctbcap_rec/Dominate_Daddy
@@ -1432,5 +1421,11 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-
-  
+- name: hotnikita
+  platform: stripchat
+  save_path: ./ctbcap_rec/hotnikita
+  log_path: ./ctbcap_rec/log/hotnikita
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
