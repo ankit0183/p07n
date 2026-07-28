@@ -1021,6 +1021,7 @@ models:
   check_interval: 300
   retry_interval: 180
   cut_time: 0
+  
 - name: Ranii2
   platform: stripchat
   save_path: ./ctbcap_rec/Ranii2
@@ -1029,6 +1030,7 @@ models:
   check_interval: 300
   retry_interval: 180
   cut_time: 0
+  
 - name: baby_dall1
   platform: stripchat
   save_path: ./ctbcap_rec/baby_dall1
@@ -1253,6 +1255,7 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+  
 - name: Sexy_sanaya-
   platform: stripchat
   save_path: ./ctbcap_rec/Sexy_sanaya-
@@ -1261,6 +1264,7 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+  
 - name: Ani77880
   platform: stripchat
   save_path: ./ctbcap_rec/Ani77880-
