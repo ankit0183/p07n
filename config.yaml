@@ -1451,4 +1451,15 @@ models:
   retry_interval: 60
   cut_time: 0
 
+
+- name: Roshelle_luxe
+  platform: stripchat
+  save_path: ./ctbcap_rec/Roshelle_luxe
+  log_path: ./ctbcap_rec/log/Roshelle_luxe
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+
   
