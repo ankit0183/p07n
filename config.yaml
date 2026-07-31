@@ -1461,5 +1461,14 @@ models:
   retry_interval: 60
   cut_time: 0
 
+- name: missbeatriss
+  platform: stripchat
+  save_path: ./ctbcap_rec/missbeatriss
+  log_path: ./ctbcap_rec/log/missbeatriss
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
 
   
