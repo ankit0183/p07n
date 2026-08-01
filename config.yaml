@@ -1478,4 +1478,21 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-  
+
+- name: hot_janvi_
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot_janvi_
+  log_path: ./ctbcap_rec/log/hot_janvi_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: lustyy_girlss
+  platform: stripchat
+  save_path: ./ctbcap_rec/lustyy_girlss
+  log_path: ./ctbcap_rec/log/lustyy_girlss
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
