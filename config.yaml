@@ -1506,3 +1506,12 @@ models:
   retry_interval: 60
   cut_time: 0
 
+- name: Siya_9877
+  platform: stripchat
+  save_path: ./ctbcap_rec/Siya_9877
+  log_path: ./ctbcap_rec/log/Siya_9877
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
