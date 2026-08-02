@@ -1550,4 +1550,25 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+
+
+- name: Hey-anamika
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hey-anamika
+  log_path: ./ctbcap_rec/log/Hey-anamika
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: hornygirl_2026
+  platform: stripchat
+  save_path: ./ctbcap_rec/hornygirl_2026
+  log_path: ./ctbcap_rec/log/hornygirl_2026
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+  
   
