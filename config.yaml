@@ -1523,3 +1523,15 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+
+- name: dasydoll
+  platform: stripchat
+  save_path: ./ctbcap_rec/dasydoll
+  log_path: ./ctbcap_rec/log/dasydoll
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+
+  
