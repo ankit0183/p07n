@@ -1401,14 +1401,7 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
-- name: sonam_sexy01
-  platform: stripchat
-  save_path: ./ctbcap_rec/sonam_sexy01
-  log_path: ./ctbcap_rec/log/sonam_sexy01
-  enabled: true
-  check_interval: 60
-  retry_interval: 60
-  cut_time: 0
+
 - name: Bold-Maya
   platform: stripchat
   save_path: ./ctbcap_rec/Bold-Maya
