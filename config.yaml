@@ -1581,10 +1581,10 @@ models:
   retry_interval: 60
   cut_time: 0
 
-- name: saltyxcouple05
+- name: Saltyxcouple05
   platform: stripchat
-  save_path: ./ctbcap_rec/saltyxcouple05
-  log_path: ./ctbcap_rec/log/saltyxcouple05
+  save_path: ./ctbcap_rec/Saltyxcouple05
+  log_path: ./ctbcap_rec/log/Saltyxcouple05
   enabled: true
   check_interval: 60
   retry_interval: 60
