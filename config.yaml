@@ -1687,4 +1687,31 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+
+- name: rupali321g
+  platform: stripchat
+  save_path: ./ctbcap_rec/rupali321g
+  log_path: ./ctbcap_rec/log/rupali321g
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: BestSweetyBB
+  platform: stripchat
+  save_path: ./ctbcap_rec/BestSweetyBB
+  log_path: ./ctbcap_rec/log/BestSweetyBB
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: luvmp4
+  platform: stripchat
+  save_path: ./ctbcap_rec/luvmp4
+  log_path: ./ctbcap_rec/log/luvmp4
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
   
