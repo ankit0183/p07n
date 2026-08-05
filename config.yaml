@@ -1580,4 +1580,21 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+
+- name: saltyxcouple05
+  platform: stripchat
+  save_path: ./ctbcap_rec/saltyxcouple05
+  log_path: ./ctbcap_rec/log/saltyxcouple05
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
   
+- name: kavya-ranii
+  platform: stripchat
+  save_path: ./ctbcap_rec/kavya-ranii
+  log_path: ./ctbcap_rec/log/kavya-ranii
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
