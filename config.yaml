@@ -477,14 +477,6 @@ models:
   check_interval: 300
   retry_interval: 180
   cut_time: 0
-- name: PearleKalmen
-  platform: stripchat
-  save_path: ./ctbcap_rec/PearleKalmen
-  log_path: ./ctbcap_rec/log/PearleKalmen
-  enabled: true
-  check_interval: 300
-  retry_interval: 180
-  cut_time: 0
 - name: ElmiraDabato
   platform: stripchat
   save_path: ./ctbcap_rec/ElmiraDabato
