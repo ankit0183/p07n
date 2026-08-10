@@ -197,14 +197,7 @@ models:
   check_interval: 300
   retry_interval: 180
   cut_time: 0
-- name: syuri_sun
-  platform: chaturbate
-  save_path: ./ctbcap_rec/syuri_sun
-  log_path: ./ctbcap_rec/log/syuri_sun
-  enabled: true
-  check_interval: 60
-  retry_interval: 60
-  cut_time: 0
+
 - name: leo_kitty
   platform: chaturbate
   save_path: ./ctbcap_rec/leo_kitty
@@ -1800,6 +1793,15 @@ models:
   platform: stripchat
   save_path: ./ctbcap_rec/VidaInklebarger
   log_path: ./ctbcap_rec/log/VidaInklebarger
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: syuri_sun
+  platform: stripchat
+  save_path: ./ctbcap_rec/syuri_sun
+  log_path: ./ctbcap_rec/log/syuri_sun
   enabled: true
   check_interval: 60
   retry_interval: 60
