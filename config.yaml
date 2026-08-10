@@ -1776,3 +1776,31 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+
+
+- name: katyskinny
+  platform: stripchat
+  save_path: ./ctbcap_rec/katyskinny
+  log_path: ./ctbcap_rec/log/katyskinny
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Belle_Blondy
+  platform: stripchat
+  save_path: ./ctbcap_rec/Belle_Blondy
+  log_path: ./ctbcap_rec/log/Belle_Blondy
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: VidaInklebarger
+  platform: stripchat
+  save_path: ./ctbcap_rec/VidaInklebarger
+  log_path: ./ctbcap_rec/log/VidaInklebarger
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
