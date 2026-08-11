@@ -1870,3 +1870,12 @@ models:
   retry_interval: 60
   cut_time: 0
 
+
+- name: Rose_Nora
+  platform: stripchat
+  save_path: ./ctbcap_rec/Rose_Nora
+  log_path: ./ctbcap_rec/log/Rose_Nora
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
