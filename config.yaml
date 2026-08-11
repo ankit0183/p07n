@@ -1806,3 +1806,21 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+
+- name: syuri_sun
+  platform: chaturbate
+  save_path: ./ctbcap_rec/syuri_sun
+  log_path: ./ctbcap_rec/log/syuri_sun
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: juliyajam
+  platform: chaturbate
+  save_path: ./ctbcap_rec/juliyajam
+  log_path: ./ctbcap_rec/log/juliyajam
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
