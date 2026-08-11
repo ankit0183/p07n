@@ -1824,3 +1824,39 @@ models:
   check_interval: 60
   retry_interval: 60
   cut_time: 0
+
+- name: SepiahLune
+  platform: stripchat
+  save_path: ./ctbcap_rec/SepiahLune
+  log_path: ./ctbcap_rec/log/SepiahLune
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: SallieLenorud
+  platform: stripchat
+  save_path: ./ctbcap_rec/SallieLenorud
+  log_path: ./ctbcap_rec/log/SallieLenorud
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: cloesweetdreams
+  platform: stripchat
+  save_path: ./ctbcap_rec/cloesweetdreams
+  log_path: ./ctbcap_rec/log/cloesweetdreams
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: EstaGerloff
+  platform: stripchat
+  save_path: ./ctbcap_rec/EstaGerloff
+  log_path: ./ctbcap_rec/log/EstaGerloff
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
