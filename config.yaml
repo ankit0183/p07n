@@ -1990,3 +1990,19 @@ models:
   enabled: true
   check_interval: 60
   retry_interval: 60
+
+- name: Naughty_Meena
+  platform: stripchat
+  save_path: ./ctbcap_rec/Naughty_Meena
+  log_path: ./ctbcap_rec/log/Naughty_Meena
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Hye__manvi_
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hye__manvi_
+  log_path: ./ctbcap_rec/log/Hye__manvi_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
