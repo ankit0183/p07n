@@ -1974,3 +1974,11 @@ models:
   enabled: true
   check_interval: 60
   retry_interval: 60
+
+- name: Prihu143  
+  platform: stripchat
+  save_path: ./ctbcap_rec/Prihu143
+  log_path: ./ctbcap_rec/log/Prihu143
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
