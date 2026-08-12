@@ -1982,3 +1982,11 @@ models:
   enabled: true
   check_interval: 60
   retry_interval: 60
+
+- name: your_dreams__
+  platform: stripchat
+  save_path: ./ctbcap_rec/your_dreams__
+  log_path: ./ctbcap_rec/log/your_dreams__
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
