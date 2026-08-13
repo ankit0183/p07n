@@ -2006,3 +2006,21 @@ models:
   enabled: true
   check_interval: 60
   retry_interval: 60
+
+
+- name: sexcumworld
+  platform: chaturbate
+  save_path: ./ctbcap_rec/sexcumworld
+  log_path: ./ctbcap_rec/log/sexcumworld
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: HOTDARLING420
+  platform: stripchat
+  save_path: ./ctbcap_rec/HOTDARLING420
+  log_path: ./ctbcap_rec/log/HOTDARLING420
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
