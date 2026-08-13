@@ -2024,3 +2024,20 @@ models:
   enabled: true
   check_interval: 60
   retry_interval: 60
+
+- name: onibaddiee
+  platform: stripchat
+  save_path: ./ctbcap_rec/onibaddiee
+  log_path: ./ctbcap_rec/log/onibaddiee
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: lovelydepika
+  platform: stripchat
+  save_path: ./ctbcap_rec/lovelydepika
+  log_path: ./ctbcap_rec/log/lovelydepika
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  
