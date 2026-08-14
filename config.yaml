@@ -2041,3 +2041,26 @@ models:
   check_interval: 60
   retry_interval: 60
   
+- name: oo_yes_bhabhi 
+  platform: stripchat
+  save_path: ./ctbcap_rec/oo_yes_bhabhi
+  log_path: ./ctbcap_rec/log/oo_yes_bhabhi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: its_saanvi
+  platform: stripchat
+  save_path: ./ctbcap_rec/its_saanvi
+  log_path: ./ctbcap_rec/log/its_saanvi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: shy_jhanvi_
+  platform: stripchat
+  save_path: ./ctbcap_rec/shy_jhanvi_
+  log_path: ./ctbcap_rec/log/shy_jhanvi_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
