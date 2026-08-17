@@ -2064,3 +2064,132 @@ models:
   enabled: true
   check_interval: 60
   retry_interval: 60
+
+- name: Itz_Archii
+  platform: stripchat
+  save_path: ./ctbcap_rec/Itz_Archii
+  log_path: ./ctbcap_rec/log/Itz_Archii
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: cherrypie_02
+  platform: stripchat
+  save_path: ./ctbcap_rec/cherrypie_02
+  log_path: ./ctbcap_rec/log/cherrypie_02
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Jonika90
+  platform: stripchat
+  save_path: ./ctbcap_rec/Jonika90
+  log_path: ./ctbcap_rec/log/Jonika90
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: -Micky-   
+  platform: stripchat
+  save_path: ./ctbcap_rec/-Micky-
+  log_path: ./ctbcap_rec/log/-Micky-
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: ToFabForYou 
+  platform: stripchat
+  save_path: ./ctbcap_rec/ToFabForYou
+  log_path: ./ctbcap_rec/log/ToFabForYou
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Romantic-couple10 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Romantic-couple10 
+  log_path: ./ctbcap_rec/log/Romantic-couple10 
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: amaemoon_ 
+  platform: stripchat
+  save_path: ./ctbcap_rec/amaemoon_
+  log_path: ./ctbcap_rec/log/amaemoon_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Miss__Jacqueline  
+  platform: stripchat
+  save_path: ./ctbcap_rec/Miss__Jacqueline
+  log_path: ./ctbcap_rec/log/Miss__Jacqueline
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Miss__Malaika 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Miss__Malaika
+  log_path: ./ctbcap_rec/log/Miss__Malaika
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: hot_ashleel_couple18
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot_ashleel_couple18
+  log_path: ./ctbcap_rec/log/hot_ashleel_couple18
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Miss_kamiya_Jaan 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Miss_kamiya_Jaan 
+  log_path: ./ctbcap_rec/log/Miss_kamiya_Jaan 
+  enabled: true
+  check_interval: 60
+  retry_interval: 60 
+
+- name: Angel_Palak_  
+  platform: stripchat
+  save_path: ./ctbcap_rec/Angel_Palak_
+  log_path: ./ctbcap_rec/log/Angel_Palak_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60 
+
+- name: Missdelhii
+  platform: stripchat
+  save_path: ./ctbcap_rec/Missdelhii
+  log_path: ./ctbcap_rec/log/Missdelhii
+  enabled: true
+  check_interval: 60
+  retry_interval: 60 
+
+- name: veloriaX
+  platform: stripchat
+  save_path: ./ctbcap_rec/veloriaX
+  log_path: ./ctbcap_rec/log/veloriaX
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: short_girl_
+  platform: stripchat
+  save_path: ./ctbcap_rec/short_girl_
+  log_path: ./ctbcap_rec/log/short_girl_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+   
+
+- name: CaryWestberg  
+  platform: stripchat
+  save_path: ./ctbcap_rec/CaryWestberg
+  log_path: ./ctbcap_rec/log/CaryWestberg
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
