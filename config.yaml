@@ -2185,11 +2185,26 @@ models:
   check_interval: 60
   retry_interval: 60
    
-
 - name: CaryWestberg  
   platform: stripchat
   save_path: ./ctbcap_rec/CaryWestberg
   log_path: ./ctbcap_rec/log/CaryWestberg
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: JustZaraaa
+  platform: stripchat
+  save_path: ./ctbcap_rec/JustZaraaa
+  log_path: ./ctbcap_rec/log/JustZaraaa
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  
+- name: Hannahbrown 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hannahbrown
+  log_path: ./ctbcap_rec/log/Hannahbrown
   enabled: true
   check_interval: 60
   retry_interval: 60
