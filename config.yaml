@@ -2208,3 +2208,11 @@ models:
   enabled: true
   check_interval: 60
   retry_interval: 60
+
+- name: paniemmi 
+  platform: stripchat
+  save_path: ./ctbcap_rec/paniemmi
+  log_path: ./ctbcap_rec/log/paniemmi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
