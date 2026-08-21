@@ -2216,3 +2216,12 @@ models:
   enabled: true
   check_interval: 60
   retry_interval: 60
+
+- name: ElaineBerum 
+  platform: stripchat
+  save_path: ./ctbcap_rec/ElaineBerum 
+  log_path: ./ctbcap_rec/log/ElaineBerum 
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
