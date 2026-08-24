@@ -2217,11 +2217,21 @@ models:
   check_interval: 60
   retry_interval: 60
 
-- name: ElaineBerum 
+- name: Kinzas_cpl  
   platform: stripchat
-  save_path: ./ctbcap_rec/ElaineBerum 
-  log_path: ./ctbcap_rec/log/ElaineBerum 
+  save_path: ./ctbcap_rec/Kinzas_cpl  
+  log_path: ./ctbcap_rec/log/Kinzas_cpl  
   enabled: true
   check_interval: 60
   retry_interval: 60
 
+- name: Hot-baby-Alexa
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hot-baby-Alexa
+  log_path: ./ctbcap_rec/log/Hot-baby-Alexa
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0 
+
+Hot-baby-Alexa
