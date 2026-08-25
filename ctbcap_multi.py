@@ -20,6 +20,8 @@ Usage:
 
 import argparse
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -33,11 +35,12 @@ import sys
 import time
 import uuid
 import atexit
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Set
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 import aiohttp
 import yaml
@@ -142,6 +145,7 @@ class ModelConfig:
     max_restart_attempts: Optional[int] = None
     priority: int = 0
     adaptive_interval: Optional[bool] = None
+    _stripchat_domain: Optional[str] = None
 
     def __post_init__(self):
         if self.platform is None:
@@ -149,6 +153,18 @@ class ModelConfig:
         if self.url and not self.name:
             parsed = urlparse(self.url)
             self.name = parsed.path.strip('/').split('/')[0].lower()
+
+    @property
+    def stripchat_domain(self) -> str:
+        """Base domain for this model's stripchat page (supports mirrors like
+        stripchatgirls.com). Derived from the configured url when present."""
+        if self._stripchat_domain:
+            return self._stripchat_domain
+        if self.url:
+            p = urlparse(self.url)
+            if p.netloc:
+                return f"{p.scheme or 'https'}://{p.netloc}/"
+        return "https://stripchat.com/"
 
 @dataclass
 class Config:
@@ -459,19 +475,21 @@ class PlatformClient:
         self.debug = debug
         self.logger = logging.getLogger("platform")
 
-    async def fetch_stream_url(self, model: str, platform: str, max_retries: int = 3, retry_delay: float = 5.0) -> Optional[str]:
+    async def fetch_stream_url(self, model_config, max_retries: int = 3, retry_delay: float = 5.0) -> Optional[str]:
+        name = model_config.name
+        platform = model_config.platform
         for attempt in range(max_retries):
             try:
                 if platform == "chaturbate":
-                    result = await self._fetch_chaturbate(model)
+                    result = await self._fetch_chaturbate(name)
                 elif platform == "stripchat":
-                    result = await self._fetch_stripchat(model)
+                    result = await self._fetch_stripchat(model_config)
                 else:
                     return None
                 if result:
                     return result
             except Exception as e:
-                self.logger.warning(f"Attempt {attempt + 1}/{max_retries} failed for {model} on {platform}: {e}")
+                self.logger.warning(f"Attempt {attempt + 1}/{max_retries} failed for {name} on {platform}: {e}")
             if attempt < max_retries - 1:
                 await asyncio.sleep(retry_delay)
         return None
@@ -498,65 +516,88 @@ class PlatformClient:
             self.logger.error(f"Chaturbate fetch error for {model}: {e}")
         return None
 
-    async def _fetch_stripchat(self, model: str) -> Optional[str]:
-        api_url = f"https://stripchat.com/api/front/v2/models/username/{model}/cam"
-        headers = {"User-Agent": self.user_agent}
-        try:
-            async with self.session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if self.debug:
-                    self.logger.debug(f"Stripchat API status: {resp.status}")
-                if resp.status in (200, 302):
-                    data = await resp.json()
-                    cam = data.get('cam', {})
-                    if cam.get('isCamActive') or cam.get('isCamAvailable'):
-                        stream_name = cam.get('streamName')
-                        if stream_name:
-                            return f"https://edge-hls.sacdnssedge.com/hls/{stream_name}/master/{stream_name}_auto.m3u8"
-        except Exception as e:
-            self.logger.error(f"Stripchat fetch error for {model}: {e}")
-        return None
+    async def _fetch_stripchat(self, model_config) -> Optional[str]:
+        """Fetch StripChat stream info by parsing the model's HTML page.
+
+        All /api/front/* JSON endpoints are Cloudflare-blocked for scripts
+        (403), but the public page still serves embedded model data. Browser
+        UAs get rate-limited (406), while the Googlebot UA reliably returns
+        the full page - so we try browser UA first, then fall back.
+        """
+        name = model_config.name if hasattr(model_config, 'name') else str(model_config)
+        domain = model_config.stripchat_domain if hasattr(model_config, 'stripchat_domain') else "https://stripchat.com/"
+        page_url = f"{domain}{name}"
+
+        googlebot_ua = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+        ua_variants = [self.user_agent, googlebot_ua]
+
+        html = None
+        used_ua = None
+        headers_common = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        for ua in ua_variants:
+            try:
+                headers = {"User-Agent": ua, **headers_common}
+                async with self.session.get(page_url, headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as resp:
+                    if resp.status == 200:
+                        body = await resp.text()
+                        if len(body) > 5000 and ('streamName' in body or 'isCamActive' in body):
+                            html = body
+                            used_ua = "googlebot" if ua == googlebot_ua else "browser"
+                            break
+                    elif resp.status == 403:
+                        # Cloudflare challenge - only googlebot may pass, try next UA
+                        continue
+            except Exception as e:
+                self.logger.debug(f"Stripchat page fetch error ({name}): {e}")
+        if not html:
+            self.logger.debug(f"Stripchat page unavailable for {name} (all UA variants blocked)")
+            return None
+
+        def _grab_str(key: str):
+            m = re.search(rf'"{key}"\s*:\s*"([^"]+)"', html)
+            return m.group(1) if m else None
+
+        def _grab_bool(key: str):
+            m = re.search(rf'"{key}"\s*:\s*(true|false)', html)
+            return m.group(1) == "true" if m else None
+
+        is_online = _grab_bool("isOnline")
+        is_cam_active = _grab_bool("isCamActive")
+        status = _grab_str("status")
+        stream_name = _grab_str("streamName")
+        if not stream_name:
+            mid_m = re.search(r'"modelId"\s*:\s*(\d+)', html)
+            stream_name = mid_m.group(1) if mid_m else None
+        cdn_host = _grab_str("defaultHlsStreamHost")
+
+        if not is_cam_active and status != "public":
+            self.logger.debug(f"[{name}] Not publicly streaming (status={status}, isCamActive={is_cam_active})")
+            return None
+        if not stream_name:
+            return None
+
+        if is_online is False:
+            self.logger.debug(f"[{name}] Model offline")
+            return None
+
+        hls_source = _grab_str("hlsSource")
+        if hls_source:
+            url = hls_source.replace("\\u002F", "/").replace("\\/", "/")
+            if not url.startswith("http"):
+                url = f"https://{url}"
+            return url
+
+        host = cdn_host or "doppiocdn.media"
+        return f"https://edge-hls.{host}/hls/{stream_name}/master/{stream_name}_auto.m3u8"
 
     async def discover_stripchat_online(self, limit: int = 500) -> List[Dict[str, Any]]:
-        """Discover ALL online models on StripChat using the public API."""
-        online_models = []
-        offset = 0
-        batch_size = 100
-        headers = {"User-Agent": self.user_agent}
-
-        while offset < limit:
-            try:
-                url = f"https://stripchat.com/api/front/v2/models/offset/{offset}/limit/{batch_size}"
-                async with self.session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status != 200:
-                        self.logger.warning(f"StripChat discovery API returned {resp.status} at offset {offset}")
-                        break
-                    data = await resp.json()
-                    models = data if isinstance(data, list) else data.get('models', data.get('items', []))
-                    if not models:
-                        break
-                    for m in models:
-                        username = m.get('username', m.get('name', ''))
-                        if not username:
-                            continue
-                        cam = m if 'cam' not in m else m.get('cam', m)
-                        is_active = cam.get('isCamActive', False) or cam.get('isCamAvailable', False)
-                        if is_active:
-                            online_models.append({
-                                'name': username,
-                                'platform': 'stripchat',
-                                'display_name': m.get('displayName', username),
-                                'viewers': m.get('viewers', cam.get('viewers', 0)),
-                            })
-                    if len(models) < batch_size:
-                        break
-                    offset += batch_size
-                    await asyncio.sleep(0.5)
-            except Exception as e:
-                self.logger.error(f"StripChat discovery error at offset {offset}: {e}")
-                break
-
-        self.logger.info(f"Discovered {len(online_models)} online models on StripChat")
-        return online_models
+        """StripChat discovery via API is Cloudflare-blocked for scripts (403).
+        Kept as a stub so callers degrade gracefully."""
+        self.logger.warning("StripChat discovery API is blocked by Cloudflare (403); skipping")
+        return []
 
     async def discover_chaturbate_online(self, limit: int = 500) -> List[Dict[str, Any]]:
         """Discover ALL online models on Chaturbate using the public API."""
@@ -678,8 +719,8 @@ class DownloadQueue:
             diff = self.config.max_concurrent_downloads - new_limit
             for _ in range(min(diff, current_available)):
                 try:
-                    self._download_semaphore.acquire_nowait()
-                except ValueError:
+                    await asyncio.wait_for(self._download_semaphore.acquire(), timeout=0.01)
+                except asyncio.TimeoutError:
                     break
 
     async def acquire_download_slot(self) -> bool:
@@ -911,6 +952,202 @@ class RecordingSession:
     segment: int = 1
     output_file: str = ""
     restart_count: int = 0
+    watchdog: Optional[asyncio.Task] = None
+    feeder_task: Optional[asyncio.Task] = None
+
+class StripchatHLSFeeder:
+    """Fetches StripChat HLS through MOUFLON protection and pipes raw fMP4
+    fragments into ffmpeg's stdin.
+
+    StripChat's CDN serves an advert placeholder unless the media playlist is
+    requested with psch/pkey auth params, and segment filenames inside the
+    playlist are scrambled (reversed base64 XOR sha256(pdkey)). We decode them
+    and stream init + chunks to ffmpeg ourselves.
+    """
+
+    MOUFLON_KEYS = {
+        "Zokee2OhPh9kugh4": "Quean4cai9boJa5a",
+        "Zeechoej4aleeshi": "ubahjae7goPoodi6",
+        "Ook7quaiNgiyuhai": "EQueeGh2kaewa3ch",
+        "Fq6m2TO2ZeBkRPm9": "xb6di1NF9EFXHUwb",
+        "GrRncsoByZmsiT6L": "NigHYyOD9l4rvAEb",
+        "1Dzcc6OjP73LKbtI": "Y64UVwX5RrIWnOLp",
+        "N2oLovTIXb0o28Uj": "ABE7Sj8jh3oPM2ae",
+        "NTK9aqcLmNFMWrpQ": "tOcYOap4Ty1l9Jzb",
+        "7uUnbD0jMCB9GH32": "lzCQ6QBTnLpB0zMF",
+        "Ohi7eTRBpkAuML0l": "kExe29N2sLFrHGqu",
+        "OLzu7QlySkG2fVRn": "CsovScFH9VirSJ4Z",
+    }
+    KEYS_URL = "https://raw.githubusercontent.com/kesamom/stripchat_mouflon/main/stripchat_mouflon_keys.json"
+    POLL_INTERVAL = 2.0
+    MAX_FAILURES = 8
+
+    def __init__(self, session: aiohttp.ClientSession, logger, model_name: str,
+                 master_url: str, referer: str):
+        self.session = session
+        self.logger = logger
+        self.model_name = model_name
+        self.master_url = master_url
+        self.referer = referer
+        self.media_url: Optional[str] = None
+        self.init_url: Optional[str] = None
+        self.pdkey: Optional[str] = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"feeder-{model_name}")
+
+    def _headers(self) -> Dict[str, str]:
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": self.referer,
+            "Origin": self.referer.rstrip('/'),
+            "Accept": "*/*",
+        }
+
+    async def _get_text(self, url: str) -> Optional[str]:
+        try:
+            async with self.session.get(url, headers=self._headers(),
+                                        timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return None
+                return await resp.text()
+        except Exception:
+            return None
+
+    async def _get_bytes(self, url: str) -> Optional[bytes]:
+        try:
+            async with self.session.get(url, headers=self._headers(),
+                                        timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                if resp.status != 200:
+                    return None
+                return await resp.read()
+        except Exception:
+            return None
+
+    async def resolve(self) -> bool:
+        """Find a working psch/pkey combo; returns True if a real live playlist exists."""
+        mt = await self._get_text(self.master_url)
+        if not mt or not mt.startswith('#EXTM3U'):
+            return False
+        tags = re.findall(r'#EXT-X-MOUFLON:PSCH:v(\d+):([A-Za-z0-9]+)', mt)
+        variant = next((l.strip() for l in mt.splitlines()
+                        if l.strip() and not l.startswith('#')), None)
+        if not variant:
+            return False
+        media_base = urljoin(self.master_url, variant)
+        for ver, pkey in tags:
+            pdkey = self.MOUFLON_KEYS.get(pkey)
+            if not pdkey:
+                continue
+            sep = '&' if '?' in media_base else '?'
+            txt = await self._get_text(f"{media_base}{sep}psch=v{ver}&pkey={pkey}")
+            if txt and '#EXTINF' in txt and 'MOUFLON-ADVERT' not in txt:
+                map_m = re.search(r'#EXT-X-MAP:URI="([^"]+)"', txt)
+                self.media_url = f"{media_base}{sep}psch=v{ver}&pkey={pkey}"
+                self.init_url = urljoin(media_base, map_m.group(1)) if map_m else None
+                self.pdkey = pdkey
+                return True
+        return False
+
+    @staticmethod
+    def _decrypt_token(token: str, pdkey: str) -> str:
+        try:
+            padded = token[::-1]
+            padded += "=" * ((4 - len(padded) % 4) % 4)
+            data = base64.b64decode(padded)
+            hash_bytes = hashlib.sha256(pdkey.encode("utf-8")).digest()
+            out = bytes(b ^ hash_bytes[i % len(hash_bytes)] for i, b in enumerate(data))
+            return out.decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+    def _decode_playlist(self, text: str) -> List[tuple]:
+        """Returns ordered [(seq, real_url)] entries from a MOUFLON playlist."""
+        seq_match = re.search(r'#EXT-X-MEDIA-SEQUENCE:(\d+)', text)
+        seq_base = int(seq_match.group(1)) if seq_match else 0
+        entries: List[tuple] = []
+        lines = text.splitlines()
+        pending_uri = None
+        idx_in_window = 0
+        for line in lines:
+            m = re.match(r'#EXT-X-MOUFLON:URI:(\S+)', line)
+            if m:
+                pending_uri = m.group(1)
+                continue
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            # first non-tag line after a MOUFLON:URI is the placeholder segment
+            uri = pending_uri
+            pending_uri = None
+            if not uri:
+                continue
+            mm = re.search(r'_(\d+)_([^_]+)_(\d+)', uri)
+            if not mm:
+                continue
+            real_token = self._decrypt_token(mm.group(2), self.pdkey or "")
+            if not real_token:
+                continue
+            real_url = uri.replace(f'_{mm.group(2)}_', f'_{real_token}_')
+            entries.append((seq_base + idx_in_window, real_url))
+            idx_in_window += 1
+        return entries
+
+    @staticmethod
+    def _write_sync(stdin, data: bytes):
+        stdin.write(data)
+        stdin.flush()
+
+    async def _write(self, stdin, data: bytes) -> bool:
+        """Blocking-safe write to ffmpeg's pipe (Popen stdin is synchronous)."""
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(self._executor, self._write_sync, stdin, data)
+            return True
+        except (BrokenPipeError, OSError, ValueError):
+            return False
+
+    async def run(self, stdin) -> str:
+        """Main loop; writes fMP4 fragments to ffmpeg stdin. Returns exit reason."""
+        if not self.media_url:
+            return "unresolved"
+        init_bytes = await self._get_bytes(self.init_url) if self.init_url else None
+        if not init_bytes:
+            return "init_failed"
+        if not await self._write(stdin, init_bytes):
+            return "pipe_closed"
+
+        next_seq: Optional[int] = None
+        failures = 0
+        while True:
+            txt = await self._get_text(self.media_url)
+            if not txt or '#EXTINF' not in txt or 'MOUFLON-ADVERT' in txt:
+                failures += 1
+                if failures >= self.MAX_FAILURES:
+                    return "playlist_gone"
+                if failures == 3:
+                    # keys may have rotated - try re-resolving once
+                    if not await self.resolve():
+                        self.logger.debug(f"[{self.model_name}] Feeder re-resolve failed")
+                await asyncio.sleep(self.POLL_INTERVAL)
+                continue
+            failures = 0
+            entries = self._decode_playlist(txt)
+            endlist = '#EXT-X-ENDLIST' in txt
+            if next_seq is None:
+                # join at live edge: start with the newest available chunk
+                next_seq = entries[-1][0] if entries else 0
+            for seq, url in entries:
+                if seq < next_seq:
+                    continue
+                data = await self._get_bytes(url)
+                if data:
+                    if not await self._write(stdin, data):
+                        return "pipe_closed"
+                else:
+                    self.logger.debug(f"[{self.model_name}] Chunk {seq} fetch failed (expired?)")
+                next_seq = seq + 1
+            if endlist:
+                return "ended"
+            await asyncio.sleep(self.POLL_INTERVAL)
 
 class Recorder:
     def __init__(self, global_config: GlobalConfig, metadata_logger: MetadataLogger,
@@ -926,6 +1163,8 @@ class Recorder:
         self.resource_monitor = resource_monitor
         self.logger = logging.getLogger("recorder")
         self.sessions: Dict[str, RecordingSession] = {}
+        self._thread_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="ctbcap-worker")
+        self.http_session: Optional[aiohttp.ClientSession] = None
         self.ffmpeg_path = self._find_ffmpeg()
 
     def _find_ffmpeg(self) -> str:
@@ -963,7 +1202,7 @@ class Recorder:
 
         self.logger.debug(f"[{model.name}] cut_time={cut_time}, cut_size={cut_size}, codec={codec}")
 
-        referer = "https://chaturbate.com/" if model.platform == "chaturbate" else "https://stripchat.com/"
+        referer = "https://chaturbate.com/" if model.platform == "chaturbate" else model.stripchat_domain
         origin = referer
         headers = f"Referer: {referer}\r\nOrigin: {origin}\r\n"
 
@@ -990,6 +1229,8 @@ class Recorder:
             cmd.extend(['-http_proxy', '0'])
 
         cmd.extend(['-codec', codec])
+        # HLS/TS audio is ADTS-AAC; MP4 requires ASC -> convert via bitstream filter
+        cmd.extend(['-bsf:a', 'aac_adtstoasc'])
 
         if extra:
             cmd.extend(extra.split())
@@ -1002,19 +1243,73 @@ class Recorder:
                 '-segment_time', str(cut_time),
                 '-segment_start_number', '1',
                 '-reset_timestamps', '1',
-                '-segment_format_options', 'movflags=+faststart+frag_keyframe+empty_moov',
+                '-segment_format_options', 'movflags=+frag_keyframe+empty_moov+default_base_moof',
                 '-strftime', '1',
                 output_path
             ])
         else:
             cmd.extend([
                 '-f', 'mp4',
-                '-movflags', 'frag_keyframe+empty_moov+faststart',
+                '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
                 '-avoid_negative_ts', 'make_zero',
                 output_path
             ])
 
         return cmd
+
+    def _remux_to_faststart_mp4(self, path: str) -> bool:
+        """Remux a fragmented (in-progress) MP4 into a standard faststart MP4."""
+        try:
+            if not os.path.isfile(path) or os.path.getsize(path) == 0:
+                return False
+            tmp = path + ".fixing.mp4"
+            cmd = [
+                self.ffmpeg_path,
+                '-y', '-loglevel', 'error',
+                '-i', path,
+                '-c', 'copy',
+                '-movflags', '+faststart',
+                '-f', 'mp4',
+                tmp
+            ]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
+            if result.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+                os.replace(tmp, path)
+                size_mib = os.path.getsize(path) / (1024 * 1024)
+                self.logger.info(f"Finalized MP4 (faststart): {os.path.basename(path)} ({size_mib:.1f} MiB)")
+                return True
+            if os.path.isfile(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+            self.logger.warning(f"Remux failed for {os.path.basename(path)} (rc={result.returncode}), keeping original")
+            return False
+        except Exception as e:
+            self.logger.warning(f"Remux error for {path}: {e}")
+            return False
+
+    def _is_segmented_output(self, model: ModelConfig) -> bool:
+        cut_time = model.cut_time if model.cut_time is not None else self.global_config.cut_time
+        return bool(cut_time and cut_time > 0)
+
+    def _build_ffmpeg_pipe_cmd(self, model: ModelConfig, output_path: str) -> List[str]:
+        codec = model.ffmpeg_codec or self.global_config.ffmpeg_codec
+        return [
+            self.ffmpeg_path,
+            '-y', '-loglevel', 'warning' if not self.global_config.debug_mode else 'debug',
+            '-nostdin',
+            '-f', 'mp4',
+            '-i', 'pipe:0',
+            '-probesize', '10M',
+            '-analyzeduration', '10M',
+            '-codec', codec,
+            '-bsf:a', 'aac_adtstoasc',
+            '-f', 'mp4',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-avoid_negative_ts', 'make_zero',
+            output_path
+        ]
 
     async def start_recording(self, model: ModelConfig, stream_url: str) -> bool:
         save_path = model.save_path or os.path.join(self.global_config.save_path, model.name)
@@ -1039,13 +1334,18 @@ class Recorder:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         output_file = os.path.join(save_path, f"{model.name}-{timestamp}.mp4")
 
-        cmd = self._build_ffmpeg_cmd(model, stream_url, output_file)
+        use_feeder = model.platform == "stripchat"
+        if use_feeder:
+            cmd = self._build_ffmpeg_pipe_cmd(model, output_file)
+        else:
+            cmd = self._build_ffmpeg_cmd(model, stream_url, output_file)
 
         self.logger.info(f"Starting recording for {model.name}: {' '.join(cmd)}")
 
         try:
             process = subprocess.Popen(
                 cmd,
+                stdin=subprocess.PIPE if use_feeder else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True
@@ -1060,6 +1360,16 @@ class Recorder:
             )
             self.sessions[model.name] = session
 
+            if use_feeder:
+                feeder = StripchatHLSFeeder(
+                    session=self.http_session or aiohttp.ClientSession(),
+                    logger=self.logger,
+                    model_name=model.name,
+                    master_url=stream_url,
+                    referer=model.stripchat_domain
+                )
+                session.feeder_task = asyncio.create_task(self._run_feeder(feeder, process))
+
             self.bandwidth_monitor.register(model.name, output_file)
 
             self.metadata_logger.log_event(model.name, "recording_started", {
@@ -1073,6 +1383,7 @@ class Recorder:
                 f"Started recording {model.name} on {model.platform}", model.notifications)
 
             asyncio.create_task(self._monitor_process(model, process))
+            session.watchdog = asyncio.create_task(self._watchdog_process(model, session))
 
             return True
         except Exception as e:
@@ -1080,35 +1391,114 @@ class Recorder:
             self.download_queue.release_download_slot()
             return False
 
+    async def _run_feeder(self, feeder: StripchatHLSFeeder, process: subprocess.Popen):
+        model_name = feeder.model_name
+        reason = "error"
+        try:
+            if process.stdin is None:
+                raise RuntimeError("ffmpeg stdin not available")
+            resolved = False
+            for attempt in range(4):
+                if await feeder.resolve():
+                    resolved = True
+                    break
+                self.logger.debug(f"[{model_name}] Feeder resolve attempt {attempt + 1}/4 failed")
+                await asyncio.sleep(2)
+            if not resolved:
+                reason = "unresolved"
+                self.logger.warning(f"[{model_name}] Feeder could not resolve live playlist")
+            else:
+                reason = await feeder.run(process.stdin)
+                self.logger.info(f"[{model_name}] Feeder finished: {reason}")
+        except asyncio.CancelledError:
+            reason = "cancelled"
+            raise
+        except Exception as e:
+            self.logger.error(f"[{model_name}] Feeder crashed: {e}")
+        finally:
+            try:
+                if process.stdin and not process.stdin.closed:
+                    process.stdin.close()
+            except Exception:
+                pass
+            if reason in ("playlist_gone", "ended", "unresolved", "init_failed"):
+                # stream is over; make sure ffmpeg exits promptly
+                try:
+                    if process.poll() is None:
+                        await asyncio.sleep(2)
+                        if process.poll() is None:
+                            process.terminate()
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _read_stream(stream) -> bytes:
+        try:
+            return stream.read() if stream else b""
+        except Exception:
+            return b""
+
+    async def _wait_with_output(self, process: subprocess.Popen):
+        """Wait for process exit while draining stdout/stderr. Unlike
+        communicate(), this never touches stdin (feeder owns the pipe)."""
+        loop = asyncio.get_running_loop()
+        stdout_t = loop.run_in_executor(self._thread_pool, self._read_stream, process.stdout)
+        stderr_t = loop.run_in_executor(self._thread_pool, self._read_stream, process.stderr)
+        await loop.run_in_executor(self._thread_pool, process.wait)
+        stdout = await stdout_t
+        stderr = await stderr_t
+        return stdout, stderr
+
     async def _monitor_process(self, model_config: ModelConfig, process: subprocess.Popen):
         model_name = model_config.name
+        session = None
+        return_code = None
+        loop = asyncio.get_running_loop()
         try:
-            stdout, stderr = await asyncio.to_thread(process.communicate)
+            stdout, stderr = await self._wait_with_output(process)
             return_code = process.returncode
 
             session = self.sessions.get(model_name)
             if session:
+                if session.watchdog and not session.watchdog.done():
+                    session.watchdog.cancel()
+                if session.feeder_task and not session.feeder_task.done():
+                    session.feeder_task.cancel()
                 duration = time.time() - session.start_time
                 stderr_text = stderr.decode('utf-8', errors='ignore')[-2000:] if stderr else ""
 
                 bw_stats = self.bandwidth_monitor.unregister(model_name)
 
+                finalized = False
+                if not self._is_segmented_output(model_config) and session.output_file:
+                    finalized = await loop.run_in_executor(
+                        self._thread_pool, self._remux_to_faststart_mp4, session.output_file)
+
+                final_size = 0
+                if session.output_file and os.path.isfile(session.output_file):
+                    try:
+                        final_size = os.path.getsize(session.output_file)
+                    except OSError:
+                        pass
+
                 self.metadata_logger.log_event(model_name, "recording_stopped", {
-                   
                     "return_code": return_code,
                     "stderr": stderr_text,
+                    "finalized_faststart": finalized,
+                    "final_size_bytes": final_size,
                     "total_bytes": bw_stats['total_bytes'] if bw_stats else 0,
                     "peak_speed": bw_stats['peak_speed'] if bw_stats else 0,
                 })
 
+                size_str = f", {final_size / (1024 * 1024):.1f} MiB" if final_size > 0 else ""
                 if return_code == 0:
-                    self.logger.info(f"[{model_name}] Recording completed normally after {duration:.0f}s")
+                    self.logger.info(f"[{model_name}] Recording completed normally after {duration:.0f}s{size_str}")
                 elif return_code == -15 or return_code == 143:
-                    self.logger.info(f"[{model_name}] Recording stopped by signal")
+                    self.logger.info(f"[{model_name}] Recording stopped by signal after {duration:.0f}s{size_str}")
                 elif return_code < 0:
-                    self.logger.warning(f"[{model_name}] Recording terminated by signal {-return_code}")
+                    self.logger.warning(f"[{model_name}] Recording terminated by signal {-return_code} after {duration:.0f}s{size_str}")
                 else:
-                    self.logger.warning(f"[{model_name}] Recording exited with code {return_code}: {stderr_text[:500]}")
+                    self.logger.warning(f"[{model_name}] Recording exited with code {return_code} after {duration:.0f}s{size_str}: {stderr_text[:500]}")
 
                 await self.notifications.send(model_name, "RECORDING_STOPPED",
                     f"Recording stopped after {duration:.0f}s (code: {return_code})", None)
@@ -1144,15 +1534,54 @@ class Recorder:
             self.logger.error(f"Process monitor error for {model_name}: {e}")
             self.download_queue.release_download_slot()
 
+    async def _watchdog_process(self, model_config: ModelConfig, session: 'RecordingSession'):
+        """Kill ffmpeg if it writes nothing or its output stops growing."""
+        model_name = model_config.name
+        try:
+            await asyncio.sleep(20)
+            last_size = -1
+            zero_strikes = 0
+            stall_strikes = 0
+            while (model_name in self.sessions
+                   and session.process is not None
+                   and session.process.poll() is None):
+                size = 0
+                try:
+                    if os.path.isfile(session.output_file):
+                        size = os.path.getsize(session.output_file)
+                except OSError:
+                    pass
+
+                if size == 0:
+                    zero_strikes += 1
+                else:
+                    zero_strikes = 0
+
+                if size == last_size:
+                    stall_strikes += 1
+                else:
+                    stall_strikes = 0
+                last_size = size
+
+                if zero_strikes >= 2 or stall_strikes >= 3:
+                    reason = "no data written" if zero_strikes >= 2 else "output stalled"
+                    self.logger.warning(f"[{model_name}] Watchdog: {reason} (size={size}), stopping ffmpeg")
+                    self.metadata_logger.log_event(model_name, "watchdog_stop", {"reason": reason, "size": size})
+                    try:
+                        session.process.terminate()
+                    except ProcessLookupError:
+                        pass
+                    return
+
+                await asyncio.sleep(15)
+        except asyncio.CancelledError:
+            pass
+
     async def _restart_recording(self, model_config: ModelConfig, restart_count: int):
         """Attempt to restart a recording by re-fetching the stream URL."""
         model_name = model_config.name
         try:
-            stream_url = await self.download_queue.fetch_with_semaphore(
-                lambda m, p: asyncio.ensure_future(
-                    PlatformClient.__init__ and None or None
-                ) if False else self._fetch_stream(model_config)
-            )
+            stream_url = await self.download_queue.fetch_with_semaphore(self._fetch_stream, model_config)
             if stream_url:
                 session = RecordingSession(
                     model=model_name,
@@ -1170,11 +1599,16 @@ class Recorder:
 
     async def _fetch_stream(self, model_config: ModelConfig) -> Optional[str]:
         """Fetch stream URL for restart using a temporary client."""
-        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
+        import ssl
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        session = aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=15))
         try:
             client = PlatformClient(session, self.global_config.user_agent, self.global_config.debug_mode)
             return await client.fetch_stream_url(
-                model_config.name, model_config.platform,
+                model_config,
                 max_retries=2, retry_delay=3.0
             )
         finally:
@@ -1184,14 +1618,26 @@ class Recorder:
         session = self.sessions.get(model_name)
         if session and session.process:
             self.logger.info(f"Stopping recording for {model_name}")
-            session.process.terminate()
+            if session.feeder_task and not session.feeder_task.done():
+                session.feeder_task.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.shield(session.feeder_task), timeout=3)
+                except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                    pass
+            process = session.process
             try:
-                await asyncio.wait_for(asyncio.to_thread(session.process.wait), timeout=10)
-            except asyncio.TimeoutError:
-                session.process.kill()
-                await asyncio.to_thread(session.process.wait)
-            self.bandwidth_monitor.unregister(model_name)
-            self.download_queue.release_download_slot()
+                process.terminate()
+            except ProcessLookupError:
+                pass
+            deadline = time.time() + 10
+            while process.poll() is None and time.time() < deadline:
+                await asyncio.sleep(0.2)
+            if process.poll() is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            # Slot release + finalization handled by _monitor_process once ffmpeg exits
 
     async def stop_all(self):
         for model_name in list(self.sessions.keys()):
@@ -1254,13 +1700,102 @@ class ModelMonitor:
             interval = self.model.check_interval or self.global_config.check_interval
             await asyncio.sleep(interval)
 
+    async def _validate_stream(self, stream_url: str) -> bool:
+        """Deep validation: master playlist must expose a live media playlist with
+        reachable segments. Catches private/VOD/token-blocked rooms that still
+        serve a master playlist. For StripChat this goes through the MOUFLON
+        feeder resolution (psch/pkey auth + advert detection)."""
+        if self.model.platform == "stripchat":
+            try:
+                feeder = StripchatHLSFeeder(
+                    session=self.platform_client.session,
+                    logger=self.logger,
+                    model_name=self.model.name,
+                    master_url=stream_url,
+                    referer=self.model.stripchat_domain
+                )
+                ok = await feeder.resolve()
+                if not ok:
+                    self.logger.debug(f"[{self.model.name}] Stream validation: no live MOUFLON playlist")
+                return ok
+            except Exception as e:
+                self.logger.debug(f"[{self.model.name}] Stream validation error: {e}")
+                return False
+
+        headers = {
+            "User-Agent": self.global_config.user_agent,
+            "Accept": "*/*",
+        }
+        if self.model.platform != "chaturbate":
+            referer = self.model.stripchat_domain
+            headers["Referer"] = referer
+            headers["Origin"] = referer
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            session = self.platform_client.session
+
+            async with session.get(stream_url, headers=headers, timeout=timeout) as resp:
+                if resp.status != 200:
+                    self.logger.debug(f"[{self.model.name}] Stream validation: master HTTP {resp.status}")
+                    return False
+                master_text = await resp.text()
+            if not master_text.startswith('#EXTM3U'):
+                return False
+
+            media_url = stream_url
+            media_text = master_text
+            variant = next((l.strip() for l in master_text.splitlines()
+                            if l.strip() and not l.startswith('#')), None)
+            if variant:
+                media_url = urljoin(stream_url, variant)
+                async with session.get(media_url, headers=headers, timeout=timeout) as resp2:
+                    if resp2.status != 200:
+                        self.logger.debug(f"[{self.model.name}] Stream validation: media playlist HTTP {resp2.status}")
+                        return False
+                    media_text = await resp2.text()
+
+            if '#EXT-X-ENDLIST' in media_text:
+                self.logger.debug(f"[{self.model.name}] Stream validation: playlist is VOD/ended")
+                return False
+
+            segments = [l.strip() for l in media_text.splitlines()
+                        if l.strip() and not l.startswith('#')]
+            if not segments:
+                return False
+
+            seg_url = urljoin(media_url, segments[0])
+            try:
+                async with session.get(seg_url, headers={**headers, "Range": "bytes=0-1023"},
+                                       timeout=aiohttp.ClientTimeout(total=10)) as resp3:
+                    if resp3.status not in (200, 206):
+                        self.logger.debug(f"[{self.model.name}] Stream validation: segment HTTP {resp3.status}")
+                        return False
+                    chunk = await resp3.read()
+                    if not chunk:
+                        return False
+            except asyncio.TimeoutError:
+                self.logger.debug(f"[{self.model.name}] Stream validation: segment fetch timed out")
+                return False
+
+            return True
+        except Exception as e:
+            self.logger.debug(f"[{self.model.name}] Stream validation error: {e}")
+        return False
+
     async def _check_and_record(self):
         stream_url = await self.download_queue.fetch_with_semaphore(
             self.platform_client.fetch_stream_url,
-            self.model.name, self.model.platform,
+            self.model,
             max_retries=self.global_config.download_queue.fetch_retry_attempts,
             retry_delay=self.global_config.download_queue.fetch_retry_delay
         )
+
+        if stream_url:
+            # Validate the stream actually delivers data before recording
+            if not await self._validate_stream(stream_url):
+                if self.last_status == "online":
+                    self.logger.info(f"[{self.model.name}] Stream URL returned invalid/404 - treating as OFFLINE")
+                stream_url = None
 
         if stream_url:
             was_in_grace = self.download_queue.cancel_offline_grace(self.model.name)
@@ -1500,13 +2035,17 @@ class CtbCap:
         self.running = False
 
     async def start(self):
+        import ssl as _ssl
         setup_logging(self.config.global_.log_path, self.config.global_.debug_mode, "ctbcap")
 
         max_concurrent = max(
             self.config.global_.download_queue.max_concurrent_fetches,
             self.config.global_.download_queue.max_concurrent_downloads
         ) * 2
-        connector = aiohttp.TCPConnector(limit=max_concurrent, limit_per_host=30)
+        ssl_context = _ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = _ssl.CERT_NONE
+        connector = aiohttp.TCPConnector(limit=max_concurrent, limit_per_host=30, ssl=ssl_context)
         timeout = aiohttp.ClientTimeout(total=30, connect=10)
         self.session = aiohttp.ClientSession(connector=connector, timeout=timeout)
 
@@ -1524,6 +2063,7 @@ class CtbCap:
 
         self.recorder = Recorder(self.config.global_, self.metadata_logger, self.notifications,
                                 self.download_queue, self.disk_monitor, self.bandwidth_monitor)
+        self.recorder.http_session = self.session
 
         enabled_count = 0
         for model in self.config.models:
@@ -1949,7 +2489,11 @@ def cmd_discover(args, config_path: str):
     platform = args.platform or config.global_.platform
 
     async def _discover():
-        connector = aiohttp.TCPConnector(limit=20)
+        import ssl as _ssl
+        ssl_context = _ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = _ssl.CERT_NONE
+        connector = aiohttp.TCPConnector(limit=20, ssl=ssl_context)
         timeout = aiohttp.ClientTimeout(total=15)
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             client = PlatformClient(session, config.global_.user_agent, False)
