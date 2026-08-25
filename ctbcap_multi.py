@@ -1163,8 +1163,9 @@ class Recorder:
         self.resource_monitor = resource_monitor
         self.logger = logging.getLogger("recorder")
         self.sessions: Dict[str, RecordingSession] = {}
-        self._thread_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="ctbcap-worker")
+        self._thread_pool = ThreadPoolExecutor(max_workers=64, thread_name_prefix="ctbcap-worker")
         self.http_session: Optional[aiohttp.ClientSession] = None
+        self.ffmpeg_safe_mode = False
         self.ffmpeg_path = self._find_ffmpeg()
 
     def _find_ffmpeg(self) -> str:
@@ -1204,12 +1205,15 @@ class Recorder:
 
         referer = "https://chaturbate.com/" if model.platform == "chaturbate" else model.stripchat_domain
         origin = referer
-        headers = f"Referer: {referer}\r\nOrigin: {origin}\r\n"
+        # Chaturbate's CDN (mmcdn) 403s any request carrying "Icy-MetaData: 1"
+        # (which ffmpeg sends by default) and requires an Accept-Encoding header.
+        headers = f"Referer: {referer}\r\nOrigin: {origin}\r\nAccept-Encoding: gzip, deflate\r\n"
 
         cmd = [
             self.ffmpeg_path,
             '-y', '-loglevel', 'warning' if not self.global_config.debug_mode else 'debug',
             '-nostdin',
+            '-icy', '0',
             '-reconnect', '1',
             '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
@@ -1224,6 +1228,19 @@ class Recorder:
             '-fflags', '+genpts+nobuffer+discardcorrupt+igndts',
             '-i', stream_url,
         ]
+
+        if self.ffmpeg_safe_mode:
+            # Older ffmpeg builds (e.g. Termux) may reject newer/protocol options.
+            # Drop everything non-essential so recording can proceed.
+            for bool_flag in ('-copyts', '-start_at_zero', '-copy_unknown', '-icy'):
+                while bool_flag in cmd:
+                    cmd.remove(bool_flag)
+            for val_flag in ('-tls_verify', '-timeout'):
+                while val_flag in cmd:
+                    i = cmd.index(val_flag)
+                    del cmd[i:i + 2]
+            i = cmd.index('-fflags')
+            cmd[i + 1] = '+genpts'
 
         if self.global_config.ignore_proxy:
             cmd.extend(['-http_proxy', '0'])
@@ -1457,7 +1474,6 @@ class Recorder:
         try:
             stdout, stderr = await self._wait_with_output(process)
             return_code = process.returncode
-
             session = self.sessions.get(model_name)
             if session:
                 if session.watchdog and not session.watchdog.done():
@@ -1499,6 +1515,17 @@ class Recorder:
                     self.logger.warning(f"[{model_name}] Recording terminated by signal {-return_code} after {duration:.0f}s{size_str}")
                 else:
                     self.logger.warning(f"[{model_name}] Recording exited with code {return_code} after {duration:.0f}s{size_str}: {stderr_text[:500]}")
+
+                if (not self.ffmpeg_safe_mode and return_code not in (0,)
+                        and duration < 30):
+                    err_low = stderr_text.lower()
+                    markers = ('unrecognized option', 'option not found',
+                               'error setting option', 'failed to set value')
+                    if any(mk in err_low for mk in markers):
+                        self.ffmpeg_safe_mode = True
+                        self.logger.warning(
+                            f"[{model_name}] ffmpeg rejected command options "
+                            f"({stderr_text[:120]}...); enabling SAFE MODE for future recordings")
 
                 await self.notifications.send(model_name, "RECORDING_STOPPED",
                     f"Recording stopped after {duration:.0f}s (code: {return_code})", None)
@@ -1705,6 +1732,13 @@ class ModelMonitor:
         reachable segments. Catches private/VOD/token-blocked rooms that still
         serve a master playlist. For StripChat this goes through the MOUFLON
         feeder resolution (psch/pkey auth + advert detection)."""
+        if self.model.platform == "chaturbate":
+            # CB edge tokens bind to whichever HTTP client touches them FIRST.
+            # Probing with aiohttp would claim the session and every subsequent
+            # ffmpeg request returns 403 -> empty recordings. Rely on the API
+            # room_status gate + the no-data watchdog instead.
+            return True
+
         if self.model.platform == "stripchat":
             try:
                 feeder = StripchatHLSFeeder(
@@ -1865,6 +1899,7 @@ class HealthServer:
             return
 
         self.app = web.Application()
+        self.app.router.add_get('/', self.index_handler)
         self.app.router.add_get('/health', self.health_handler)
         self.app.router.add_get('/status', self.status_handler)
         self.app.router.add_get('/metrics', self.metrics_handler)
@@ -1887,6 +1922,56 @@ class HealthServer:
 
     async def health_handler(self, request):
         return web.json_response({"status": "healthy", "version": VERSION, "timestamp": datetime.now(timezone.utc).isoformat()})
+
+    def _room_url(self, model_config) -> str:
+        if model_config.platform == "chaturbate":
+            return f"https://chaturbate.com/{model_config.name}/"
+        base = model_config.stripchat_domain or "https://stripchat.com/"
+        return f"{base.rstrip('/')}/{model_config.name}"
+
+    async def index_handler(self, request):
+        sessions = self.recorder.sessions
+        rows = []
+        for m in self.monitors:
+            name = m.model.name
+            s = sessions.get(name)
+            room = self._room_url(m.model)
+            if s:
+                dur = int(time.time() - s.start_time)
+                bw = self.recorder.bandwidth_monitor.update(name)
+                size_mb = (bw['bytes'] / (1024 * 1024)) if bw else 0
+                status = f"<span class='rec'>● RECORDING</span> {dur//3600:02d}:{(dur%3600)//60:02d}:{dur%60:02d} · {size_mb:.1f} MiB"
+                action = (f"<a class='btn open' href='{room}' target='_blank'>▶ Open Stream</a> "
+                          f"<button class='btn stop' onclick=\"stopModel('{name}')\">Stop</button>")
+            else:
+                status = "<span class='off'>○ offline/idle</span>" if m.last_status != 'online' \
+                    else "<span class='onlin'>○ online (starting…)</span>"
+                action = f"<a class='btn open' href='{room}' target='_blank'>▶ Open Stream</a>"
+            rows.append(
+                f"<tr><td>{name}</td><td>{m.model.platform}</td><td>{status}</td><td>{action}</td></tr>")
+        html = f"""<!DOCTYPE html><html><head><meta charset='utf-8'>
+<title>ctbcap dashboard</title><meta http-equiv='refresh' content='5'>
+<style>
+body{{font-family:-apple-system,sans-serif;background:#111;color:#ddd;margin:24px}}
+h1{{font-size:20px}} table{{border-collapse:collapse;width:100%;max-width:900px}}
+td,th{{padding:8px 12px;border-bottom:1px solid #333;text-align:left;font-size:14px}}
+.rec{{color:#4caf50;font-weight:bold}} .onlin{{color:#ff9800}} .off{{color:#666}}
+.btn{{display:inline-block;padding:6px 12px;border-radius:6px;border:none;cursor:pointer;
+font-size:13px;margin-right:6px;text-decoration:none}}
+.open{{background:#1e88e5;color:#fff}} .stop{{background:#e53935;color:#fff}}
+</style></head><body>
+<h1>ctbcap recordings ({len(sessions)} active / {len(self.monitors)} models)</h1>
+<table><tr><th>Model</th><th>Platform</th><th>Status</th><th>Actions</th></tr>
+{''.join(rows)}
+</table>
+<script>
+async function stopModel(n){{
+  await fetch('/control/'+n+'/stop', {{method:'POST'}});
+  location.reload();
+}}
+</script>
+</body></html>"""
+        return web.Response(text=html, content_type='text/html')
 
     async def status_handler(self, request):
         sessions = {}
