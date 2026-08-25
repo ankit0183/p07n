@@ -1,2795 +1,2290 @@
-#!/usr/bin/env python3
-"""
-CtbCap Multi-Model Recorder v2.0
-A Python-based recorder for Chaturbate and StripChat.
-Records ALL available online models concurrently with auto-discovery,
-tmux integration, auto-restart, and full CLI management.
-
-Usage:
-  ./ctbcap_multi.py start                      Start recording all models
-  ./ctbcap_multi.py add <name> --platform ...   Add a model to config.yaml
-  ./ctbcap_multi.py remove <name>               Remove a model from config.yaml
-  ./ctbcap_multi.py list                        List all configured models
-  ./ctbcap_multi.py status                      Show recording status
-  ./ctbcap_multi.py discover                    Discover ALL online models on platform
-  ./ctbcap_multi.py tmux                        Start in tmux with per-model panes
-  ./ctbcap_multi.py tmux-dashboard              Start tmux dashboard view
-  ./ctbcap_multi.py dedup                       Remove duplicate models from config
-  ./ctbcap_multi.py stop                        Stop running daemon
-"""
-
-import argparse
-import asyncio
-import base64
-import hashlib
-import json
-import logging
-import os
-import platform
-import random
-import re
-import shutil
-import signal
-import subprocess
-import sys
-import time
-import uuid
-import atexit
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Optional, List, Dict, Any, Set
-from urllib.parse import urlparse, urljoin
-
-import aiohttp
-import yaml
-
-try:
-    from aiohttp import web
-    HAS_AIOHTTP_WEB = True
-except ImportError:
-    HAS_AIOHTTP_WEB = False
-
-VERSION = "2.0.0"
-PID_FILE = "ctbcap.pid"
-
-# ========================
-# Configuration
-# ========================
-
-@dataclass
-class NotificationConfig:
-    enabled: bool = False
-    telegram: Dict[str, Any] = field(default_factory=lambda: {"enabled": False, "bot_token": "", "chat_id": ""})
-    discord: Dict[str, Any] = field(default_factory=lambda: {"enabled": False, "webhook_url": ""})
-    ntfy: Dict[str, Any] = field(default_factory=lambda: {"enabled": False, "topic": "", "server": "https://ntfy.sh"})
-
-@dataclass
-class MetadataConfig:
-    enabled: bool = True
-    log_path: str = "/log/metadata.jsonl"
-
-@dataclass
-class HealthCheckConfig:
-    enabled: bool = True
-    port: int = 8080
-
-@dataclass
-class DownloadQueueConfig:
-    max_concurrent_downloads: int = 10
-    max_concurrent_fetches: int = 20
-    offline_grace_seconds: int = 30
-    fetch_retry_attempts: int = 3
-    fetch_retry_delay: float = 3.0
-    min_free_space_mib: int = 1024
-    adaptive_concurrency: bool = True
-    max_concurrent_downloads_high: int = 25
-    max_concurrent_downloads_low: int = 5
-
-@dataclass
-class GlobalConfig:
-    save_path: str = "./ctbcap_rec"
-    log_path: str = "./ctbcap_rec/log"
-    save_space_mib: int = 512
-    log_space_mib: int = 16
-    cut_time: int = 0
-    cut_size_mib: int = 0
-    platform: str = "stripchat"
-    user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    edging_mode: bool = False
-    debug_mode: bool = False
-    ignore_proxy: bool = False
-    check_interval: int = 30
-    retry_interval: int = 30
-    ffmpeg_codec: str = "copy"
-    ffmpeg_extra_args: str = ""
-    notifications: NotificationConfig = field(default_factory=NotificationConfig)
-    metadata: MetadataConfig = field(default_factory=MetadataConfig)
-    health_check: HealthCheckConfig = field(default_factory=HealthCheckConfig)
-    download_queue: DownloadQueueConfig = field(default_factory=DownloadQueueConfig)
-    auto_restart: bool = True
-    max_restart_attempts: int = 10
-    restart_backoff_base: float = 5.0
-    restart_backoff_max: float = 300.0
-    adaptive_check_interval: bool = True
-    min_check_interval: int = 10
-    max_check_interval: int = 300
-    priority_boost_online: bool = True
-    auto_discover_enabled: bool = True
-    auto_discover_interval: int = 600
-    auto_discover_platform: str = "stripchat"
-    auto_discover_limit: int = 500
-    auto_add_new_models: bool = False
-    web_ui_enabled: bool = False
-    web_ui_port: int = 8081
-    bandwidth_limit_mbps: int = 0
-    cpu_limit_percent: int = 80
-
-@dataclass
-class ModelConfig:
-    name: str
-    platform: Optional[str] = None
-    url: Optional[str] = None
-    save_path: Optional[str] = None
-    log_path: Optional[str] = None
-    cut_time: Optional[int] = None
-    cut_size_mib: Optional[int] = None
-    check_interval: Optional[int] = None
-    retry_interval: Optional[int] = None
-    enabled: bool = True
-    ffmpeg_codec: Optional[str] = None
-    ffmpeg_extra_args: Optional[str] = None
-    notifications: Optional[NotificationConfig] = None
-    auto_restart: Optional[bool] = None
-    max_restart_attempts: Optional[int] = None
-    priority: int = 0
-    adaptive_interval: Optional[bool] = None
-    _stripchat_domain: Optional[str] = None
-
-    def __post_init__(self):
-        if self.platform is None:
-            self.platform = "chaturbate"
-        if self.url and not self.name:
-            parsed = urlparse(self.url)
-            self.name = parsed.path.strip('/').split('/')[0].lower()
-
-    @property
-    def stripchat_domain(self) -> str:
-        """Base domain for this model's stripchat page (supports mirrors like
-        stripchatgirls.com). Derived from the configured url when present."""
-        if self._stripchat_domain:
-            return self._stripchat_domain
-        if self.url:
-            p = urlparse(self.url)
-            if p.netloc:
-                return f"{p.scheme or 'https'}://{p.netloc}/"
-        return "https://stripchat.com/"
-
-@dataclass
-class Config:
-    global_: GlobalConfig = field(default_factory=GlobalConfig)
-    models: List[ModelConfig] = field(default_factory=list)
-
-    @classmethod
-    def from_yaml(cls, path: str) -> "Config":
-        with open(path, 'r') as f:
-            data = yaml.safe_load(f) or {}
-        global_data = data.get('global', {})
-        global_config = GlobalConfig(
-            save_path=global_data.get('save_path', './ctbcap_rec'),
-            log_path=global_data.get('log_path', './ctbcap_rec/log'),
-            save_space_mib=global_data.get('save_space_mib', 512),
-            log_space_mib=global_data.get('log_space_mib', 16),
-            cut_time=global_data.get('cut_time', 0),
-            cut_size_mib=global_data.get('cut_size_mib', 0),
-            platform=global_data.get('platform', 'stripchat'),
-            user_agent=global_data.get('user_agent', "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"),
-            edging_mode=global_data.get('edging_mode', False),
-            debug_mode=global_data.get('debug_mode', False),
-            ignore_proxy=global_data.get('ignore_proxy', False),
-            check_interval=global_data.get('check_interval', 30),
-            retry_interval=global_data.get('retry_interval', 30),
-            ffmpeg_codec=global_data.get('ffmpeg_codec', 'copy'),
-            ffmpeg_extra_args=global_data.get('ffmpeg_extra_args', ''),
-            notifications=NotificationConfig(**global_data.get('notifications', {})),
-            metadata=MetadataConfig(**global_data.get('metadata', {})),
-            health_check=HealthCheckConfig(**global_data.get('health_check', {})),
-            download_queue=DownloadQueueConfig(**global_data.get('download_queue', {})),
-            auto_restart=global_data.get('auto_restart', True),
-            max_restart_attempts=global_data.get('max_restart_attempts', 10),
-            restart_backoff_base=global_data.get('restart_backoff_base', 5.0),
-            restart_backoff_max=global_data.get('restart_backoff_max', 300.0),
-            adaptive_check_interval=global_data.get('adaptive_check_interval', True),
-            min_check_interval=global_data.get('min_check_interval', 10),
-            max_check_interval=global_data.get('max_check_interval', 300),
-            priority_boost_online=global_data.get('priority_boost_online', True),
-            auto_discover_enabled=global_data.get('auto_discover_enabled', True),
-            auto_discover_interval=global_data.get('auto_discover_interval', 600),
-            auto_discover_platform=global_data.get('auto_discover_platform', 'stripchat'),
-            auto_discover_limit=global_data.get('auto_discover_limit', 500),
-            auto_add_new_models=global_data.get('auto_add_new_models', False),
-            web_ui_enabled=global_data.get('web_ui_enabled', False),
-            web_ui_port=global_data.get('web_ui_port', 8081),
-            bandwidth_limit_mbps=global_data.get('bandwidth_limit_mbps', 0),
-            cpu_limit_percent=global_data.get('cpu_limit_percent', 80),
-        )
-        models = []
-        for m in data.get('models', []):
-            notif_data = m.get('notifications')
-            notifications = NotificationConfig(**notif_data) if notif_data else None
-            models.append(ModelConfig(
-                name=m.get('name', ''),
-                platform=m.get('platform'),
-                url=m.get('url'),
-                save_path=m.get('save_path'),
-                log_path=m.get('log_path'),
-                cut_time=m.get('cut_time'),
-                cut_size_mib=m.get('cut_size_mib'),
-                check_interval=m.get('check_interval'),
-                retry_interval=m.get('retry_interval'),
-                enabled=m.get('enabled', True),
-                ffmpeg_codec=m.get('ffmpeg_codec'),
-                ffmpeg_extra_args=m.get('ffmpeg_extra_args'),
-                notifications=notifications,
-                auto_restart=m.get('auto_restart'),
-                max_restart_attempts=m.get('max_restart_attempts'),
-            ))
-        return cls(global_=global_config, models=models)
-
-# ========================
-# YAML Config Manipulation (CLI helpers)
-# ========================
-
-class ConfigManager:
-    """Direct YAML manipulation for adding/removing models via CLI."""
-
-    def __init__(self, config_path: str):
-        self.config_path = config_path
-        self._data = self._load()
-
-    def _load(self) -> dict:
-        if not os.path.exists(self.config_path):
-            return {"global": {}, "models": []}
-        with open(self.config_path, 'r') as f:
-            return yaml.safe_load(f) or {"global": {}, "models": []}
-
-    def _save(self):
-        with open(self.config_path, 'w') as f:
-            yaml.dump(self._data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-
-    def _ensure_global(self):
-        if 'global' not in self._data:
-            self._data['global'] = {}
-        if 'models' not in self._data:
-            self._data['models'] = []
-
-    def add_model(self, name: str, platform: str = None, check_interval: int = None,
-                  retry_interval: int = None, cut_time: int = None, enabled: bool = True,
-                  save_path: str = None, log_path: str = None, priority: int = 0) -> bool:
-        self._ensure_global()
-        for m in self._data['models']:
-            if m.get('name') == name:
-                return False
-        if platform is None:
-            platform = self._data['global'].get('platform', 'stripchat')
-        if check_interval is None:
-            check_interval = self._data['global'].get('check_interval', 30)
-        if retry_interval is None:
-            retry_interval = self._data['global'].get('retry_interval', 30)
-        if cut_time is None:
-            cut_time = self._data['global'].get('cut_time', 0)
-        save_path_base = self._data['global'].get('save_path', './ctbcap_rec')
-        log_path_base = self._data['global'].get('log_path', './ctbcap_rec/log')
-        model_entry = {
-            'name': name,
-            'platform': platform,
-            'save_path': save_path or f"{save_path_base}/{name}",
-            'log_path': log_path or f"{log_path_base}/{name}",
-            'enabled': enabled,
-            'check_interval': check_interval,
-            'retry_interval': retry_interval,
-            'cut_time': cut_time,
-            'priority': priority,
-        }
-        self._data['models'].append(model_entry)
-        self._save()
-        return True
-
-    def add_models_bulk(self, models_list: List[Dict[str, Any]]) -> int:
-        """Add multiple models at once. Returns count of newly added models."""
-        self._ensure_global()
-        existing = {m.get('name') for m in self._data['models']}
-        added = 0
-        for m in models_list:
-            name = m.get('name', '')
-            if not name or name in existing:
-                continue
-            platform = m.get('platform', self._data['global'].get('platform', 'stripchat'))
-            check_interval = m.get('check_interval', self._data['global'].get('check_interval', 30))
-            retry_interval = m.get('retry_interval', self._data['global'].get('retry_interval', 30))
-            cut_time = m.get('cut_time', self._data['global'].get('cut_time', 0))
-            priority = m.get('priority', 0)
-            save_path_base = self._data['global'].get('save_path', './ctbcap_rec')
-            log_path_base = self._data['global'].get('log_path', './ctbcap_rec/log')
-            entry = {
-                'name': name,
-                'platform': platform,
-                'save_path': m.get('save_path', f"{save_path_base}/{name}"),
-                'log_path': m.get('log_path', f"{log_path_base}/{name}"),
-                'enabled': m.get('enabled', True),
-                'check_interval': check_interval,
-                'retry_interval': retry_interval,
-                'cut_time': cut_time,
-                'priority': priority,
-            }
-            self._data['models'].append(entry)
-            existing.add(name)
-            added += 1
-        if added > 0:
-            self._save()
-        return added
-
-    def remove_model(self, name: str) -> bool:
-        self._ensure_global()
-        before = len(self._data['models'])
-        self._data['models'] = [m for m in self._data['models'] if m.get('name') != name]
-        if len(self._data['models']) < before:
-            self._save()
-            return True
-        return False
-
-    def list_models(self) -> List[dict]:
-        self._ensure_global()
-        return self._data['models']
-
-    def dedup(self) -> int:
-        """Remove duplicate model entries. Returns count of removed duplicates."""
-        self._ensure_global()
-        seen = set()
-        deduped = []
-        removed = 0
-        for m in self._data['models']:
-            name = m.get('name', '')
-            if name in seen:
-                removed += 1
-                continue
-            seen.add(name)
-            deduped.append(m)
-        if removed > 0:
-            self._data['models'] = deduped
-            self._save()
-        return removed
-
-    def disable_model(self, name: str) -> bool:
-        self._ensure_global()
-        for m in self._data['models']:
-            if m.get('name') == name:
-                m['enabled'] = False
-                self._save()
-                return True
-        return False
-
-    def enable_model(self, name: str) -> bool:
-        self._ensure_global()
-        for m in self._data['models']:
-            if m.get('name') == name:
-                m['enabled'] = True
-                self._save()
-                return True
-        return False
-
-# ========================
-# Logging Setup
-# ========================
-
-def setup_logging(log_path: str, debug: bool = False, model_name: str = "ctbcap"):
-    Path(log_path).mkdir(parents=True, exist_ok=True)
-    log_file = Path(log_path) / f"{model_name}.log"
-    level = logging.DEBUG if debug else logging.INFO
-    handlers = [
-        logging.FileHandler(log_file),
-        logging.StreamHandler(sys.stdout)
-    ]
-    logging.basicConfig(
-        level=level,
-        format='[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s',
-        datefmt='%Y%m%d-%H%M%S',
-        handlers=handlers
-    )
-    return logging.getLogger(model_name)
-
-# ========================
-# Metadata Logging
-# ========================
-
-class MetadataLogger:
-    def __init__(self, log_path: str):
-        self.log_path = Path(log_path)
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    def log_event(self, model: str, event: str, data: Dict[str, Any] = None):
-        record = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "model": model,
-            "event": event,
-            "data": data or {}
-        }
-        try:
-            with open(self.log_path, 'a') as f:
-                f.write(json.dumps(record) + '\n')
-        except Exception as e:
-            logging.getLogger("metadata").error(f"Failed to write metadata: {e}")
-
-# ========================
-# Notifications
-# ========================
-
-class NotificationManager:
-    def __init__(self, config: NotificationConfig, session: aiohttp.ClientSession):
-        self.config = config
-        self.session = session
-        self.logger = logging.getLogger("notifications")
-
-    async def send(self, model: str, event: str, message: str, model_config: Optional[NotificationConfig] = None):
-        if not self.config.enabled and not (model_config and model_config.enabled):
-            return
-        cfg = model_config or self.config
-        full_message = f"[{model}] {event}: {message}"
-        if cfg.telegram.get('enabled'):
-            await self._send_telegram(cfg.telegram, full_message)
-        if cfg.discord.get('enabled'):
-            await self._send_discord(cfg.discord, full_message)
-        if cfg.ntfy.get('enabled'):
-            await self._send_ntfy(cfg.ntfy, full_message, model)
-
-    async def _send_telegram(self, cfg: Dict, message: str):
-        try:
-            url = f"https://api.telegram.org/bot{cfg['bot_token']}/sendMessage"
-            await self.session.post(url, json={"chat_id": cfg['chat_id'], "text": message})
-        except Exception as e:
-            self.logger.error(f"Telegram notification failed: {e}")
-
-    async def _send_discord(self, cfg: Dict, message: str):
-        try:
-            await self.session.post(cfg['webhook_url'], json={"content": message})
-        except Exception as e:
-            self.logger.error(f"Discord notification failed: {e}")
-
-    async def _send_ntfy(self, cfg: Dict, message: str, model: str):
-        try:
-            url = f"{cfg['server'].rstrip('/')}/{cfg['topic']}"
-            headers = {"Title": f"CtbCap: {model}", "Tags": "camera,recording"}
-            await self.session.post(url, data=message, headers=headers)
-        except Exception as e:
-            self.logger.error(f"ntfy notification failed: {e}")
-
-# ========================
-# Platform API Clients
-# ========================
-
-class PlatformClient:
-    def __init__(self, session: aiohttp.ClientSession, user_agent: str, debug: bool = False):
-        self.session = session
-        self.user_agent = user_agent
-        self.debug = debug
-        self.logger = logging.getLogger("platform")
-
-    async def fetch_stream_url(self, model_config, max_retries: int = 3, retry_delay: float = 5.0) -> Optional[str]:
-        name = model_config.name
-        platform = model_config.platform
-        for attempt in range(max_retries):
-            try:
-                if platform == "chaturbate":
-                    result = await self._fetch_chaturbate(name)
-                elif platform == "stripchat":
-                    result = await self._fetch_stripchat(model_config)
-                else:
-                    return None
-                if result:
-                    return result
-            except Exception as e:
-                self.logger.warning(f"Attempt {attempt + 1}/{max_retries} failed for {name} on {platform}: {e}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(retry_delay)
-        return None
-
-    async def _fetch_chaturbate(self, model: str) -> Optional[str]:
-        api_url = f"https://chaturbate.com/api/chatvideocontext/{model}/"
-        headers = {"User-Agent": self.user_agent}
-        try:
-            async with self.session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if self.debug:
-                    self.logger.debug(f"Chaturbate API status: {resp.status}")
-                if resp.status == 200:
-                    data = await resp.json()
-                    if data.get('hls_source'):
-                        return data['hls_source']
-                    room_status = data.get('room_status', 'unknown')
-                    self.logger.info(f"[{model}] Room status: {room_status}")
-                elif resp.status == 404:
-                    async with self.session.get(f"https://chaturbate.com/{model}/", headers=headers) as r:
-                        text = await r.text()
-                        if 'location:' in text.lower():
-                            pass
-        except Exception as e:
-            self.logger.error(f"Chaturbate fetch error for {model}: {e}")
-        return None
-
-    async def _fetch_stripchat(self, model_config) -> Optional[str]:
-        """Fetch StripChat stream info by parsing the model's HTML page.
-
-        All /api/front/* JSON endpoints are Cloudflare-blocked for scripts
-        (403), but the public page still serves embedded model data. Browser
-        UAs get rate-limited (406), while the Googlebot UA reliably returns
-        the full page - so we try browser UA first, then fall back.
-        """
-        name = model_config.name if hasattr(model_config, 'name') else str(model_config)
-        domain = model_config.stripchat_domain if hasattr(model_config, 'stripchat_domain') else "https://stripchat.com/"
-        page_url = f"{domain}{name}"
-
-        googlebot_ua = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
-        ua_variants = [self.user_agent, googlebot_ua]
-
-        html = None
-        used_ua = None
-        headers_common = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        for ua in ua_variants:
-            try:
-                headers = {"User-Agent": ua, **headers_common}
-                async with self.session.get(page_url, headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as resp:
-                    if resp.status == 200:
-                        body = await resp.text()
-                        if len(body) > 5000 and ('streamName' in body or 'isCamActive' in body):
-                            html = body
-                            used_ua = "googlebot" if ua == googlebot_ua else "browser"
-                            break
-                    elif resp.status == 403:
-                        # Cloudflare challenge - only googlebot may pass, try next UA
-                        continue
-            except Exception as e:
-                self.logger.debug(f"Stripchat page fetch error ({name}): {e}")
-        if not html:
-            self.logger.debug(f"Stripchat page unavailable for {name} (all UA variants blocked)")
-            return None
-
-        def _grab_str(key: str):
-            m = re.search(rf'"{key}"\s*:\s*"([^"]+)"', html)
-            return m.group(1) if m else None
-
-        def _grab_bool(key: str):
-            m = re.search(rf'"{key}"\s*:\s*(true|false)', html)
-            return m.group(1) == "true" if m else None
-
-        is_online = _grab_bool("isOnline")
-        is_cam_active = _grab_bool("isCamActive")
-        status = _grab_str("status")
-        stream_name = _grab_str("streamName")
-        if not stream_name:
-            mid_m = re.search(r'"modelId"\s*:\s*(\d+)', html)
-            stream_name = mid_m.group(1) if mid_m else None
-        cdn_host = _grab_str("defaultHlsStreamHost")
-
-        if not is_cam_active and status != "public":
-            self.logger.debug(f"[{name}] Not publicly streaming (status={status}, isCamActive={is_cam_active})")
-            return None
-        if not stream_name:
-            return None
-
-        if is_online is False:
-            self.logger.debug(f"[{name}] Model offline")
-            return None
-
-        hls_source = _grab_str("hlsSource")
-        if hls_source:
-            url = hls_source.replace("\\u002F", "/").replace("\\/", "/")
-            if not url.startswith("http"):
-                url = f"https://{url}"
-            return url
-
-        host = cdn_host or "doppiocdn.media"
-        return f"https://edge-hls.{host}/hls/{stream_name}/master/{stream_name}_auto.m3u8"
-
-    async def discover_stripchat_online(self, limit: int = 500) -> List[Dict[str, Any]]:
-        """StripChat discovery via API is Cloudflare-blocked for scripts (403).
-        Kept as a stub so callers degrade gracefully."""
-        self.logger.warning("StripChat discovery API is blocked by Cloudflare (403); skipping")
-        return []
-
-    async def discover_chaturbate_online(self, limit: int = 500) -> List[Dict[str, Any]]:
-        """Discover ALL online models on Chaturbate using the public API."""
-        online_models = []
-        offset = 0
-        batch_size = 100
-        headers = {"User-Agent": self.user_agent}
-
-        while offset < limit:
-            try:
-                url = f"https://chaturbate.com/api/chatvideocontext/?offset={offset}&limit={batch_size}"
-                async with self.session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status != 200:
-                        self.logger.warning(f"Chaturbate discovery API returned {resp.status} at offset {offset}")
-                        break
-                    data = await resp.json()
-                    models = data if isinstance(data, list) else data.get('results', [])
-                    if not models:
-                        break
-                    for m in models:
-                        username = m.get('username', '')
-                        if not username:
-                            continue
-                        room_status = m.get('room_status', 'unknown')
-                        if room_status == 'public':
-                            online_models.append({
-                                'name': username,
-                                'platform': 'chaturbate',
-                                'display_name': m.get('display_name', username),
-                                'viewers': m.get('num_viewers', 0),
-                                'room_status': room_status,
-                            })
-                    if len(models) < batch_size:
-                        break
-                    offset += batch_size
-                    await asyncio.sleep(0.5)
-            except Exception as e:
-                self.logger.error(f"Chaturbate discovery error at offset {offset}: {e}")
-                break
-
-        self.logger.info(f"Discovered {len(online_models)} online models on Chaturbate")
-        return online_models
-
-# ========================
-# Download Queue Manager
-# ========================
-
-class DownloadQueue:
-    def __init__(self, config: DownloadQueueConfig):
-        self.config = config
-        self._download_semaphore = asyncio.Semaphore(config.max_concurrent_downloads)
-        self._fetch_semaphore = asyncio.Semaphore(config.max_concurrent_fetches)
-        self.offline_grace_tasks: Dict[str, asyncio.Task] = {}
-        self.logger = logging.getLogger("download_queue")
-        self._current_download_limit = config.max_concurrent_downloads
-        self._adaptive_task: Optional[asyncio.Task] = None
-
-    @property
-    def download_semaphore(self):
-        return self._download_semaphore
-
-    @property
-    def fetch_semaphore(self):
-        return self._fetch_semaphore
-
-    async def start_adaptive_concurrency(self, recorder: 'Recorder', disk_monitor: 'DiskSpaceMonitor'):
-        """Start adaptive concurrency adjustment based on system resources."""
-        if not self.config.adaptive_concurrency:
-            return
-        self._adaptive_task = asyncio.create_task(self._adaptive_concurrency_loop(recorder, disk_monitor))
-
-    async def stop_adaptive_concurrency(self):
-        if self._adaptive_task:
-            self._adaptive_task.cancel()
-            try:
-                await self._adaptive_task
-            except asyncio.CancelledError:
-                pass
-
-    async def _adaptive_concurrency_loop(self, recorder: 'Recorder', disk_monitor: 'DiskSpaceMonitor'):
-        while True:
-            try:
-                await asyncio.sleep(30)
-                await self._adjust_concurrency(recorder, disk_monitor)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self.logger.error(f"Adaptive concurrency error: {e}")
-
-    async def _adjust_concurrency(self, recorder: 'Recorder', disk_monitor: 'DiskSpaceMonitor'):
-        active_downloads = len(recorder.sessions)
-        has_space, free_mib = disk_monitor.check_space(recorder.global_config.save_path)
-
-        target_limit = self._current_download_limit
-
-        if not has_space:
-            target_limit = max(self.config.max_concurrent_downloads_low, target_limit - 2)
-            self.logger.warning(f"Low disk space ({free_mib} MiB), reducing download limit to {target_limit}")
-        elif active_downloads >= self._current_download_limit * 0.9:
-            target_limit = min(self.config.max_concurrent_downloads_high, target_limit + 1)
-            self.logger.info(f"High utilization ({active_downloads}/{self._current_download_limit}), increasing limit to {target_limit}")
-        elif active_downloads <= self._current_download_limit * 0.3:
-            target_limit = max(self.config.max_concurrent_downloads_low, target_limit - 1)
-            self.logger.info(f"Low utilization ({active_downloads}/{self._current_download_limit}), decreasing limit to {target_limit}")
-
-        if target_limit != self._current_download_limit:
-            await self._resize_download_semaphore(target_limit)
-            self._current_download_limit = target_limit
-
-    async def _resize_download_semaphore(self, new_limit: int):
-        current_available = self._download_semaphore._value
-        current_locked = self._download_semaphore.locked()
-
-        if new_limit > self.config.max_concurrent_downloads:
-            diff = new_limit - self.config.max_concurrent_downloads
-            for _ in range(diff):
-                self._download_semaphore.release()
-        elif new_limit < self.config.max_concurrent_downloads:
-            diff = self.config.max_concurrent_downloads - new_limit
-            for _ in range(min(diff, current_available)):
-                try:
-                    await asyncio.wait_for(self._download_semaphore.acquire(), timeout=0.01)
-                except asyncio.TimeoutError:
-                    break
-
-    async def acquire_download_slot(self) -> bool:
-        return self._download_semaphore.locked() or await self._try_acquire(self._download_semaphore)
-
-    async def _try_acquire(self, semaphore: asyncio.Semaphore) -> bool:
-        try:
-            await asyncio.wait_for(semaphore.acquire(), timeout=0.1)
-            return True
-        except asyncio.TimeoutError:
-            return False
-
-    def release_download_slot(self):
-        if self._download_semaphore.locked():
-            self._download_semaphore.release()
-
-    async def fetch_with_semaphore(self, fetch_func, *args, **kwargs):
-        async with self._fetch_semaphore:
-            return await fetch_func(*args, **kwargs)
-
-    def schedule_offline_grace(self, model_name: str, callback, grace_seconds: int = None):
-        grace = grace_seconds or self.config.offline_grace_seconds
-        if model_name in self.offline_grace_tasks:
-            self.offline_grace_tasks[model_name].cancel()
-
-        async def grace_period():
-            try:
-                await asyncio.sleep(grace)
-                self.logger.info(f"Grace period ended for {model_name}, executing offline callback")
-                await callback()
-            except asyncio.CancelledError:
-                self.logger.debug(f"Grace period cancelled for {model_name} (model came back online)")
-            finally:
-                self.offline_grace_tasks.pop(model_name, None)
-
-        self.offline_grace_tasks[model_name] = asyncio.create_task(grace_period())
-
-    def cancel_offline_grace(self, model_name: str) -> bool:
-        if model_name in self.offline_grace_tasks:
-            self.offline_grace_tasks[model_name].cancel()
-            self.offline_grace_tasks.pop(model_name, None)
-            return True
-        return False
-
-    def is_in_grace_period(self, model_name: str) -> bool:
-        return model_name in self.offline_grace_tasks
-
-    def get_stats(self) -> Dict[str, Any]:
-        return {
-            'download_limit': self._current_download_limit,
-            'download_slots_used': self.config.max_concurrent_downloads - self._download_semaphore._value,
-            'download_slots_available': self._download_semaphore._value,
-            'fetch_slots_used': self.config.max_concurrent_fetches - self._fetch_semaphore._value,
-            'fetch_slots_available': self._fetch_semaphore._value,
-            'models_in_grace': len(self.offline_grace_tasks),
-        }
-
-# ========================
-# Disk Space Monitor
-# ========================
-
-class DiskSpaceMonitor:
-    def __init__(self, min_free_mib: int = 1024):
-        self.min_free_mib = min_free_mib
-        self.logger = logging.getLogger("disk_space")
-
-    def check_space(self, path: str) -> tuple[bool, int]:
-        try:
-            stat = shutil.disk_usage(path)
-            free_mib = stat.free // (1024 * 1024)
-            return free_mib >= self.min_free_mib, free_mib
-        except Exception as e:
-            self.logger.error(f"Failed to check disk space for {path}: {e}")
-            return True, 0
-
-    async def wait_for_space(self, path: str, check_interval: int = 60) -> bool:
-        while True:
-            has_space, free_mib = self.check_space(path)
-            if has_space:
-                return True
-            self.logger.warning(f"Low disk space on {path}: {free_mib} MiB free, need {self.min_free_mib} MiB. Waiting...")
-            await asyncio.sleep(check_interval)
-
-# ========================
-# Bandwidth Monitor
-# ========================
-
-class BandwidthMonitor:
-    """Track recording file sizes to estimate bandwidth usage."""
-
-    def __init__(self):
-        self.stats: Dict[str, Dict[str, Any]] = {}
-        self.logger = logging.getLogger("bandwidth")
-
-    def register(self, model_name: str, output_file: str):
-        self.stats[model_name] = {
-            'output_file': output_file,
-            'start_time': time.time(),
-            'last_check': time.time(),
-            'last_size': 0,
-            'total_bytes': 0,
-            'current_speed': 0.0,
-            'peak_speed': 0.0,
-        }
-
-    def update(self, model_name: str) -> Optional[Dict[str, Any]]:
-        stat = self.stats.get(model_name)
-        if not stat:
-            return None
-        try:
-            size = os.path.getsize(stat['output_file'])
-            now = time.time()
-            elapsed = now - stat['last_check']
-            if elapsed > 0:
-                speed = (size - stat['last_size']) / elapsed
-                stat['current_speed'] = speed
-                if speed > stat['peak_speed']:
-                    stat['peak_speed'] = speed
-            stat['last_size'] = size
-            stat['last_check'] = now
-            stat['total_bytes'] = size
-            return {
-                'bytes': size,
-                #'speed_bps': stat['current_speed'],
-               #'peak_bps': stat['peak_speed'],
-                'duration': now - stat['start_time'],
-            }
-        except OSError:
-            return None
-
-    def unregister(self, model_name: str) -> Optional[Dict[str, Any]]:
-        stat = self.stats.pop(model_name, None)
-        if stat:
-            return {
-                'total_bytes': stat['total_bytes'],
-                'duration': time.time() - stat['start_time'],
-                'peak_speed': stat['peak_speed'],
-            }
-        return None
-
-    def format_speed(self, bps: float) -> str:
-        if bps < 1024:
-            return f"{bps:.0f} B/s"
-        elif bps < 1024 * 1024:
-            return f"{bps / 1024:.1f} KB/s"
-        else:
-            return f"{bps / (1024 * 1024):.2f} MB/s"
-
-    def format_size(self, bytes_val: int) -> str:
-        if bytes_val < 1024:
-            return f"{bytes_val} B"
-        elif bytes_val < 1024 * 1024:
-            return f"{bytes_val / 1024:.1f} KB"
-        elif bytes_val < 1024 * 1024 * 1024:
-            return f"{bytes_val / (1024 * 1024):.1f} MB"
-        else:
-            return f"{bytes_val / (1024 * 1024 * 1024):.2f} GB"
-
-
-# ========================
-# Resource Monitor (Bandwidth + CPU)
-# ========================
-
-class ResourceMonitor:
-    """Monitor system resources and enforce limits."""
-
-    def __init__(self, bandwidth_limit_mbps: int = 0, cpu_limit_percent: int = 80):
-        self.bandwidth_limit_bps = bandwidth_limit_mbps * 1_000_000 if bandwidth_limit_mbps > 0 else 0
-        self.cpu_limit_percent = cpu_limit_percent
-        self.logger = logging.getLogger("resource_monitor")
-        self._total_bandwidth_bps = 0.0
-        self._bandwidth_lock = asyncio.Lock()
-        self._last_cpu_check = 0.0
-        self._cpu_percent = 0.0
-
-    async def check_bandwidth(self, current_bps: float) -> bool:
-        """Check if adding current_bps would exceed bandwidth limit."""
-        if self.bandwidth_limit_bps <= 0:
-            return True
-        async with self._bandwidth_lock:
-            projected = self._total_bandwidth_bps + current_bps
-            return projected <= self.bandwidth_limit_bps
-
-    async def reserve_bandwidth(self, bps: float):
-        async with self._bandwidth_lock:
-            self._total_bandwidth_bps += bps
-
-    async def release_bandwidth(self, bps: float):
-        async with self._bandwidth_lock:
-            self._total_bandwidth_bps = max(0, self._total_bandwidth_bps - bps)
-
-    async def get_cpu_percent(self) -> float:
-        try:
-            import psutil
-            now = time.time()
-            if now - self._last_cpu_check > 2.0:
-                self._cpu_percent = psutil.cpu_percent(interval=0.1)
-                self._last_cpu_check = now
-        except ImportError:
-            self._cpu_percent = 0.0
-        except Exception:
-            pass
-        return self._cpu_percent
-
-    def is_cpu_overloaded(self) -> bool:
-        return self._cpu_percent > self.cpu_limit_percent
-
-    def get_stats(self) -> Dict[str, Any]:
-        return {
-            'bandwidth_limit_mbps': self.bandwidth_limit_bps / 1_000_000 if self.bandwidth_limit_bps > 0 else 0,
-            'current_bandwidth_mbps': self._total_bandwidth_bps / 1_000_000,
-            'cpu_limit_percent': self.cpu_limit_percent,
-            'current_cpu_percent': round(self._cpu_percent, 1),
-            'cpu_overloaded': self.is_cpu_overloaded(),
-        }
-
-
-# ========================
-# Recorder
-# ========================
-
-@dataclass
-class RecordingSession:
-    model: str
-    platform: str
-    stream_url: str
-    process: Optional[subprocess.Popen] = None
-    start_time: float = field(default_factory=time.time)
-    segment: int = 1
-    output_file: str = ""
-    restart_count: int = 0
-    watchdog: Optional[asyncio.Task] = None
-    feeder_task: Optional[asyncio.Task] = None
-
-class StripchatHLSFeeder:
-    """Fetches StripChat HLS through MOUFLON protection and pipes raw fMP4
-    fragments into ffmpeg's stdin.
-
-    StripChat's CDN serves an advert placeholder unless the media playlist is
-    requested with psch/pkey auth params, and segment filenames inside the
-    playlist are scrambled (reversed base64 XOR sha256(pdkey)). We decode them
-    and stream init + chunks to ffmpeg ourselves.
-    """
-
-    MOUFLON_KEYS = {
-        "Zokee2OhPh9kugh4": "Quean4cai9boJa5a",
-        "Zeechoej4aleeshi": "ubahjae7goPoodi6",
-        "Ook7quaiNgiyuhai": "EQueeGh2kaewa3ch",
-        "Fq6m2TO2ZeBkRPm9": "xb6di1NF9EFXHUwb",
-        "GrRncsoByZmsiT6L": "NigHYyOD9l4rvAEb",
-        "1Dzcc6OjP73LKbtI": "Y64UVwX5RrIWnOLp",
-        "N2oLovTIXb0o28Uj": "ABE7Sj8jh3oPM2ae",
-        "NTK9aqcLmNFMWrpQ": "tOcYOap4Ty1l9Jzb",
-        "7uUnbD0jMCB9GH32": "lzCQ6QBTnLpB0zMF",
-        "Ohi7eTRBpkAuML0l": "kExe29N2sLFrHGqu",
-        "OLzu7QlySkG2fVRn": "CsovScFH9VirSJ4Z",
-    }
-    KEYS_URL = "https://raw.githubusercontent.com/kesamom/stripchat_mouflon/main/stripchat_mouflon_keys.json"
-    POLL_INTERVAL = 2.0
-    MAX_FAILURES = 8
-
-    def __init__(self, session: aiohttp.ClientSession, logger, model_name: str,
-                 master_url: str, referer: str):
-        self.session = session
-        self.logger = logger
-        self.model_name = model_name
-        self.master_url = master_url
-        self.referer = referer
-        self.media_url: Optional[str] = None
-        self.init_url: Optional[str] = None
-        self.pdkey: Optional[str] = None
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"feeder-{model_name}")
-
-    def _headers(self) -> Dict[str, str]:
-        return {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": self.referer,
-            "Origin": self.referer.rstrip('/'),
-            "Accept": "*/*",
-        }
-
-    async def _get_text(self, url: str) -> Optional[str]:
-        try:
-            async with self.session.get(url, headers=self._headers(),
-                                        timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    return None
-                return await resp.text()
-        except Exception:
-            return None
-
-    async def _get_bytes(self, url: str) -> Optional[bytes]:
-        try:
-            async with self.session.get(url, headers=self._headers(),
-                                        timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                if resp.status != 200:
-                    return None
-                return await resp.read()
-        except Exception:
-            return None
-
-    async def resolve(self) -> bool:
-        """Find a working psch/pkey combo; returns True if a real live playlist exists."""
-        mt = await self._get_text(self.master_url)
-        if not mt or not mt.startswith('#EXTM3U'):
-            return False
-        tags = re.findall(r'#EXT-X-MOUFLON:PSCH:v(\d+):([A-Za-z0-9]+)', mt)
-        variant = next((l.strip() for l in mt.splitlines()
-                        if l.strip() and not l.startswith('#')), None)
-        if not variant:
-            return False
-        media_base = urljoin(self.master_url, variant)
-        for ver, pkey in tags:
-            pdkey = self.MOUFLON_KEYS.get(pkey)
-            if not pdkey:
-                continue
-            sep = '&' if '?' in media_base else '?'
-            txt = await self._get_text(f"{media_base}{sep}psch=v{ver}&pkey={pkey}")
-            if txt and '#EXTINF' in txt and 'MOUFLON-ADVERT' not in txt:
-                map_m = re.search(r'#EXT-X-MAP:URI="([^"]+)"', txt)
-                self.media_url = f"{media_base}{sep}psch=v{ver}&pkey={pkey}"
-                self.init_url = urljoin(media_base, map_m.group(1)) if map_m else None
-                self.pdkey = pdkey
-                return True
-        return False
-
-    @staticmethod
-    def _decrypt_token(token: str, pdkey: str) -> str:
-        try:
-            padded = token[::-1]
-            padded += "=" * ((4 - len(padded) % 4) % 4)
-            data = base64.b64decode(padded)
-            hash_bytes = hashlib.sha256(pdkey.encode("utf-8")).digest()
-            out = bytes(b ^ hash_bytes[i % len(hash_bytes)] for i, b in enumerate(data))
-            return out.decode("utf-8", errors="ignore")
-        except Exception:
-            return ""
-
-    def _decode_playlist(self, text: str) -> List[tuple]:
-        """Returns ordered [(seq, real_url)] entries from a MOUFLON playlist."""
-        seq_match = re.search(r'#EXT-X-MEDIA-SEQUENCE:(\d+)', text)
-        seq_base = int(seq_match.group(1)) if seq_match else 0
-        entries: List[tuple] = []
-        lines = text.splitlines()
-        pending_uri = None
-        idx_in_window = 0
-        for line in lines:
-            m = re.match(r'#EXT-X-MOUFLON:URI:(\S+)', line)
-            if m:
-                pending_uri = m.group(1)
-                continue
-            stripped = line.strip()
-            if not stripped or stripped.startswith('#'):
-                continue
-            # first non-tag line after a MOUFLON:URI is the placeholder segment
-            uri = pending_uri
-            pending_uri = None
-            if not uri:
-                continue
-            mm = re.search(r'_(\d+)_([^_]+)_(\d+)', uri)
-            if not mm:
-                continue
-            real_token = self._decrypt_token(mm.group(2), self.pdkey or "")
-            if not real_token:
-                continue
-            real_url = uri.replace(f'_{mm.group(2)}_', f'_{real_token}_')
-            entries.append((seq_base + idx_in_window, real_url))
-            idx_in_window += 1
-        return entries
-
-    @staticmethod
-    def _write_sync(stdin, data: bytes):
-        stdin.write(data)
-        stdin.flush()
-
-    async def _write(self, stdin, data: bytes) -> bool:
-        """Blocking-safe write to ffmpeg's pipe (Popen stdin is synchronous)."""
-        loop = asyncio.get_running_loop()
-        try:
-            await loop.run_in_executor(self._executor, self._write_sync, stdin, data)
-            return True
-        except (BrokenPipeError, OSError, ValueError):
-            return False
-
-    async def run(self, stdin) -> str:
-        """Main loop; writes fMP4 fragments to ffmpeg stdin. Returns exit reason."""
-        if not self.media_url:
-            return "unresolved"
-        init_bytes = await self._get_bytes(self.init_url) if self.init_url else None
-        if not init_bytes:
-            return "init_failed"
-        if not await self._write(stdin, init_bytes):
-            return "pipe_closed"
-
-        next_seq: Optional[int] = None
-        failures = 0
-        while True:
-            txt = await self._get_text(self.media_url)
-            if not txt or '#EXTINF' not in txt or 'MOUFLON-ADVERT' in txt:
-                failures += 1
-                if failures >= self.MAX_FAILURES:
-                    return "playlist_gone"
-                if failures == 3:
-                    # keys may have rotated - try re-resolving once
-                    if not await self.resolve():
-                        self.logger.debug(f"[{self.model_name}] Feeder re-resolve failed")
-                await asyncio.sleep(self.POLL_INTERVAL)
-                continue
-            failures = 0
-            entries = self._decode_playlist(txt)
-            endlist = '#EXT-X-ENDLIST' in txt
-            if next_seq is None:
-                # join at live edge: start with the newest available chunk
-                next_seq = entries[-1][0] if entries else 0
-            for seq, url in entries:
-                if seq < next_seq:
-                    continue
-                data = await self._get_bytes(url)
-                if data:
-                    if not await self._write(stdin, data):
-                        return "pipe_closed"
-                else:
-                    self.logger.debug(f"[{self.model_name}] Chunk {seq} fetch failed (expired?)")
-                next_seq = seq + 1
-            if endlist:
-                return "ended"
-            await asyncio.sleep(self.POLL_INTERVAL)
-
-class Recorder:
-    def __init__(self, global_config: GlobalConfig, metadata_logger: MetadataLogger,
-                 notifications: NotificationManager, download_queue: DownloadQueue,
-                 disk_monitor: DiskSpaceMonitor, bandwidth_monitor: BandwidthMonitor,
-                 resource_monitor: ResourceMonitor = None):
-        self.global_config = global_config
-        self.metadata_logger = metadata_logger
-        self.notifications = notifications
-        self.download_queue = download_queue
-        self.disk_monitor = disk_monitor
-        self.bandwidth_monitor = bandwidth_monitor
-        self.resource_monitor = resource_monitor
-        self.logger = logging.getLogger("recorder")
-        self.sessions: Dict[str, RecordingSession] = {}
-        self._thread_pool = ThreadPoolExecutor(max_workers=64, thread_name_prefix="ctbcap-worker")
-        self.http_session: Optional[aiohttp.ClientSession] = None
-        self.ffmpeg_path = self._find_ffmpeg()
-
-    def _find_ffmpeg(self) -> str:
-        termux_paths = [
-            '/data/data/com.termux/files/usr/bin/ffmpeg',
-            '/data/data/com.termux/files/usr/bin/ffmpeg-static',
-        ]
-        mac_paths = [
-            '/opt/homebrew/bin/ffmpeg',
-            '/usr/local/bin/ffmpeg',
-            '/opt/homebrew/opt/ffmpeg/bin/ffmpeg',
-        ]
-        linux_paths = [
-            '/usr/bin/ffmpeg',
-            '/usr/local/bin/ffmpeg',
-            '/snap/bin/ffmpeg',
-            '/var/lib/snapd/snap/bin/ffmpeg',
-        ]
-        found = shutil.which('ffmpeg')
-        if found:
-            return found
-        all_paths = termux_paths + mac_paths + linux_paths
-        for path in all_paths:
-            if os.path.isfile(path) and os.access(path, os.X_OK):
-                self.logger.info(f"Found ffmpeg at: {path}")
-                return path
-        self.logger.warning("ffmpeg not found in standard locations, using 'ffmpeg' from PATH")
-        return 'ffmpeg'
-
-    def _build_ffmpeg_cmd(self, model: ModelConfig, stream_url: str, output_path: str) -> List[str]:
-        cut_time = model.cut_time if model.cut_time is not None else self.global_config.cut_time
-        cut_size = model.cut_size_mib if model.cut_size_mib is not None else self.global_config.cut_size_mib
-        codec = model.ffmpeg_codec or self.global_config.ffmpeg_codec
-        extra = model.ffmpeg_extra_args or self.global_config.ffmpeg_extra_args
-
-        self.logger.debug(f"[{model.name}] cut_time={cut_time}, cut_size={cut_size}, codec={codec}")
-
-        referer = "https://chaturbate.com/" if model.platform == "chaturbate" else model.stripchat_domain
-        origin = referer
-        # Chaturbate's CDN (mmcdn) 403s any request carrying "Icy-MetaData: 1"
-        # (which ffmpeg sends by default) and requires an Accept-Encoding header.
-        headers = f"Referer: {referer}\r\nOrigin: {origin}\r\nAccept-Encoding: gzip, deflate\r\n"
-
-        cmd = [
-            self.ffmpeg_path,
-            '-y', '-loglevel', 'warning' if not self.global_config.debug_mode else 'debug',
-            '-nostdin',
-            '-icy', '0',
-            '-reconnect', '1',
-            '-reconnect_at_eof', '1',
-            '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '30',
-            '-rw_timeout', '30000000',
-            '-timeout', '30000000',
-            '-copyts', '-start_at_zero',
-            '-copy_unknown',
-            '-user_agent', self.global_config.user_agent,
-            '-headers', headers,
-            '-tls_verify', '0',
-            '-fflags', '+genpts+nobuffer+discardcorrupt+igndts',
-            '-i', stream_url,
-        ]
-
-        if self.global_config.ignore_proxy:
-            cmd.extend(['-http_proxy', '0'])
-
-        cmd.extend(['-codec', codec])
-        # HLS/TS audio is ADTS-AAC; MP4 requires ASC -> convert via bitstream filter
-        cmd.extend(['-bsf:a', 'aac_adtstoasc'])
-
-        if extra:
-            cmd.extend(extra.split())
-
-        if cut_time and cut_time > 0:
-            if '%03d' not in output_path:
-                output_path = output_path.replace('.mp4', '_%03d.mp4')
-            cmd.extend([
-                '-f', 'segment',
-                '-segment_time', str(cut_time),
-                '-segment_start_number', '1',
-                '-reset_timestamps', '1',
-                '-segment_format_options', 'movflags=+frag_keyframe+empty_moov+default_base_moof',
-                '-strftime', '1',
-                output_path
-            ])
-        else:
-            cmd.extend([
-                '-f', 'mp4',
-                '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-                '-avoid_negative_ts', 'make_zero',
-                output_path
-            ])
-
-        return cmd
-
-    def _remux_to_faststart_mp4(self, path: str) -> bool:
-        """Remux a fragmented (in-progress) MP4 into a standard faststart MP4."""
-        try:
-            if not os.path.isfile(path) or os.path.getsize(path) == 0:
-                return False
-            tmp = path + ".fixing.mp4"
-            cmd = [
-                self.ffmpeg_path,
-                '-y', '-loglevel', 'error',
-                '-i', path,
-                '-c', 'copy',
-                '-movflags', '+faststart',
-                '-f', 'mp4',
-                tmp
-            ]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
-            if result.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
-                os.replace(tmp, path)
-                size_mib = os.path.getsize(path) / (1024 * 1024)
-                self.logger.info(f"Finalized MP4 (faststart): {os.path.basename(path)} ({size_mib:.1f} MiB)")
-                return True
-            if os.path.isfile(tmp):
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
-            self.logger.warning(f"Remux failed for {os.path.basename(path)} (rc={result.returncode}), keeping original")
-            return False
-        except Exception as e:
-            self.logger.warning(f"Remux error for {path}: {e}")
-            return False
-
-    def _is_segmented_output(self, model: ModelConfig) -> bool:
-        cut_time = model.cut_time if model.cut_time is not None else self.global_config.cut_time
-        return bool(cut_time and cut_time > 0)
-
-    def _build_ffmpeg_pipe_cmd(self, model: ModelConfig, output_path: str) -> List[str]:
-        codec = model.ffmpeg_codec or self.global_config.ffmpeg_codec
-        return [
-            self.ffmpeg_path,
-            '-y', '-loglevel', 'warning' if not self.global_config.debug_mode else 'debug',
-            '-nostdin',
-            '-f', 'mp4',
-            '-i', 'pipe:0',
-            '-probesize', '10M',
-            '-analyzeduration', '10M',
-            '-codec', codec,
-            '-bsf:a', 'aac_adtstoasc',
-            '-f', 'mp4',
-            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-            '-avoid_negative_ts', 'make_zero',
-            output_path
-        ]
-
-    async def start_recording(self, model: ModelConfig, stream_url: str) -> bool:
-        save_path = model.save_path or os.path.join(self.global_config.save_path, model.name)
-        Path(save_path).mkdir(parents=True, exist_ok=True)
-
-        has_space, free_mib = self.disk_monitor.check_space(save_path)
-        if not has_space:
-            self.logger.error(f"Insufficient disk space for {model.name}: {free_mib} MiB free, need {self.disk_monitor.min_free_mib} MiB")
-            await self.notifications.send(model.name, "DISK_SPACE_LOW",
-                f"Insufficient disk space: {free_mib} MiB free, need {self.disk_monitor.min_free_mib} MiB", model.notifications)
-            return False
-
-        acquired = await self.download_queue.acquire_download_slot()
-        if not acquired:
-            self.logger.warning(f"No download slot available for {model.name}, waiting...")
-            await asyncio.sleep(1)
-            acquired = await self.download_queue.acquire_download_slot()
-            if not acquired:
-                self.logger.error(f"Could not acquire download slot for {model.name}")
-                return False
-
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        output_file = os.path.join(save_path, f"{model.name}-{timestamp}.mp4")
-
-        use_feeder = model.platform == "stripchat"
-        if use_feeder:
-            cmd = self._build_ffmpeg_pipe_cmd(model, output_file)
-        else:
-            cmd = self._build_ffmpeg_cmd(model, stream_url, output_file)
-
-        self.logger.info(f"Starting recording for {model.name}: {' '.join(cmd)}")
-
-        try:
-            process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE if use_feeder else None,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                start_new_session=True
-            )
-
-            session = RecordingSession(
-                model=model.name,
-                platform=model.platform,
-                stream_url=stream_url,
-                process=process,
-                output_file=output_file
-            )
-            self.sessions[model.name] = session
-
-            if use_feeder:
-                feeder = StripchatHLSFeeder(
-                    session=self.http_session or aiohttp.ClientSession(),
-                    logger=self.logger,
-                    model_name=model.name,
-                    master_url=stream_url,
-                    referer=model.stripchat_domain
-                )
-                session.feeder_task = asyncio.create_task(self._run_feeder(feeder, process))
-
-            self.bandwidth_monitor.register(model.name, output_file)
-
-            self.metadata_logger.log_event(model.name, "recording_started", {
-                "platform": model.platform,
-                "stream_url": stream_url,
-                "output_file": output_file,
-                "pid": process.pid
-            })
-
-            await self.notifications.send(model.name, "RECORDING_STARTED",
-                f"Started recording {model.name} on {model.platform}", model.notifications)
-
-            asyncio.create_task(self._monitor_process(model, process))
-            session.watchdog = asyncio.create_task(self._watchdog_process(model, session))
-
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to start recording for {model.name}: {e}")
-            self.download_queue.release_download_slot()
-            return False
-
-    async def _run_feeder(self, feeder: StripchatHLSFeeder, process: subprocess.Popen):
-        model_name = feeder.model_name
-        reason = "error"
-        try:
-            if process.stdin is None:
-                raise RuntimeError("ffmpeg stdin not available")
-            resolved = False
-            for attempt in range(4):
-                if await feeder.resolve():
-                    resolved = True
-                    break
-                self.logger.debug(f"[{model_name}] Feeder resolve attempt {attempt + 1}/4 failed")
-                await asyncio.sleep(2)
-            if not resolved:
-                reason = "unresolved"
-                self.logger.warning(f"[{model_name}] Feeder could not resolve live playlist")
-            else:
-                reason = await feeder.run(process.stdin)
-                self.logger.info(f"[{model_name}] Feeder finished: {reason}")
-        except asyncio.CancelledError:
-            reason = "cancelled"
-            raise
-        except Exception as e:
-            self.logger.error(f"[{model_name}] Feeder crashed: {e}")
-        finally:
-            try:
-                if process.stdin and not process.stdin.closed:
-                    process.stdin.close()
-            except Exception:
-                pass
-            if reason in ("playlist_gone", "ended", "unresolved", "init_failed"):
-                # stream is over; make sure ffmpeg exits promptly
-                try:
-                    if process.poll() is None:
-                        await asyncio.sleep(2)
-                        if process.poll() is None:
-                            process.terminate()
-                except Exception:
-                    pass
-
-    @staticmethod
-    def _read_stream(stream) -> bytes:
-        try:
-            return stream.read() if stream else b""
-        except Exception:
-            return b""
-
-    async def _wait_with_output(self, process: subprocess.Popen):
-        """Wait for process exit while draining stdout/stderr. Unlike
-        communicate(), this never touches stdin (feeder owns the pipe)."""
-        loop = asyncio.get_running_loop()
-        stdout_t = loop.run_in_executor(self._thread_pool, self._read_stream, process.stdout)
-        stderr_t = loop.run_in_executor(self._thread_pool, self._read_stream, process.stderr)
-        await loop.run_in_executor(self._thread_pool, process.wait)
-        stdout = await stdout_t
-        stderr = await stderr_t
-        return stdout, stderr
-
-    async def _monitor_process(self, model_config: ModelConfig, process: subprocess.Popen):
-        model_name = model_config.name
-        session = None
-        return_code = None
-        loop = asyncio.get_running_loop()
-        try:
-            stdout, stderr = await self._wait_with_output(process)
-            return_code = process.returncode
-            session = self.sessions.get(model_name)
-            if session:
-                if session.watchdog and not session.watchdog.done():
-                    session.watchdog.cancel()
-                if session.feeder_task and not session.feeder_task.done():
-                    session.feeder_task.cancel()
-                duration = time.time() - session.start_time
-                stderr_text = stderr.decode('utf-8', errors='ignore')[-2000:] if stderr else ""
-
-                bw_stats = self.bandwidth_monitor.unregister(model_name)
-
-                finalized = False
-                if not self._is_segmented_output(model_config) and session.output_file:
-                    finalized = await loop.run_in_executor(
-                        self._thread_pool, self._remux_to_faststart_mp4, session.output_file)
-
-                final_size = 0
-                if session.output_file and os.path.isfile(session.output_file):
-                    try:
-                        final_size = os.path.getsize(session.output_file)
-                    except OSError:
-                        pass
-
-                self.metadata_logger.log_event(model_name, "recording_stopped", {
-                    "return_code": return_code,
-                    "stderr": stderr_text,
-                    "finalized_faststart": finalized,
-                    "final_size_bytes": final_size,
-                    "total_bytes": bw_stats['total_bytes'] if bw_stats else 0,
-                    "peak_speed": bw_stats['peak_speed'] if bw_stats else 0,
-                })
-
-                size_str = f", {final_size / (1024 * 1024):.1f} MiB" if final_size > 0 else ""
-                if return_code == 0:
-                    self.logger.info(f"[{model_name}] Recording completed normally after {duration:.0f}s{size_str}")
-                elif return_code == -15 or return_code == 143:
-                    self.logger.info(f"[{model_name}] Recording stopped by signal after {duration:.0f}s{size_str}")
-                elif return_code < 0:
-                    self.logger.warning(f"[{model_name}] Recording terminated by signal {-return_code} after {duration:.0f}s{size_str}")
-                else:
-                    self.logger.warning(f"[{model_name}] Recording exited with code {return_code} after {duration:.0f}s{size_str}: {stderr_text[:500]}")
-
-                await self.notifications.send(model_name, "RECORDING_STOPPED",
-                    f"Recording stopped after {duration:.0f}s (code: {return_code})", None)
-
-                del self.sessions[model_name]
-
-            self.download_queue.release_download_slot()
-
-            should_restart = (
-                self.global_config.auto_restart
-                and model_config.enabled
-                and session is not None
-                and return_code != 0
-                and return_code != -15
-                and return_code != 143
-            )
-
-            if should_restart:
-                max_attempts = model_config.max_restart_attempts or self.global_config.max_restart_attempts
-                if session.restart_count < max_attempts:
-                    backoff = min(
-                        self.global_config.restart_backoff_base * (2 ** session.restart_count),
-                        self.global_config.restart_backoff_max
-                    )
-                    self.logger.info(f"[{model_name}] Auto-restarting in {backoff:.0f}s (attempt {session.restart_count + 1}/{max_attempts})")
-                    await asyncio.sleep(backoff)
-                    if model_name not in self.sessions:
-                        asyncio.create_task(self._restart_recording(model_config, session.restart_count + 1))
-                else:
-                    self.logger.warning(f"[{model_name}] Max restart attempts ({max_attempts}) reached, not restarting")
-
-        except Exception as e:
-            self.logger.error(f"Process monitor error for {model_name}: {e}")
-            self.download_queue.release_download_slot()
-
-    async def _watchdog_process(self, model_config: ModelConfig, session: 'RecordingSession'):
-        """Kill ffmpeg if it writes nothing or its output stops growing."""
-        model_name = model_config.name
-        try:
-            await asyncio.sleep(20)
-            last_size = -1
-            zero_strikes = 0
-            stall_strikes = 0
-            while (model_name in self.sessions
-                   and session.process is not None
-                   and session.process.poll() is None):
-                size = 0
-                try:
-                    if os.path.isfile(session.output_file):
-                        size = os.path.getsize(session.output_file)
-                except OSError:
-                    pass
-
-                if size == 0:
-                    zero_strikes += 1
-                else:
-                    zero_strikes = 0
-
-                if size == last_size:
-                    stall_strikes += 1
-                else:
-                    stall_strikes = 0
-                last_size = size
-
-                if zero_strikes >= 2 or stall_strikes >= 3:
-                    reason = "no data written" if zero_strikes >= 2 else "output stalled"
-                    self.logger.warning(f"[{model_name}] Watchdog: {reason} (size={size}), stopping ffmpeg")
-                    self.metadata_logger.log_event(model_name, "watchdog_stop", {"reason": reason, "size": size})
-                    try:
-                        session.process.terminate()
-                    except ProcessLookupError:
-                        pass
-                    return
-
-                await asyncio.sleep(15)
-        except asyncio.CancelledError:
-            pass
-
-    async def _restart_recording(self, model_config: ModelConfig, restart_count: int):
-        """Attempt to restart a recording by re-fetching the stream URL."""
-        model_name = model_config.name
-        try:
-            stream_url = await self.download_queue.fetch_with_semaphore(self._fetch_stream, model_config)
-            if stream_url:
-                session = RecordingSession(
-                    model=model_name,
-                    platform=model_config.platform,
-                    stream_url=stream_url,
-                    restart_count=restart_count
-                )
-                self.sessions[model_name] = session
-                await self.start_recording(model_config, stream_url)
-                # Update restart count on the session
-                if model_name in self.sessions:
-                    self.sessions[model_name].restart_count = restart_count
-        except Exception as e:
-            self.logger.error(f"Auto-restart failed for {model_name}: {e}")
-
-    async def _fetch_stream(self, model_config: ModelConfig) -> Optional[str]:
-        """Fetch stream URL for restart using a temporary client."""
-        import ssl
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-        session = aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=15))
-        try:
-            client = PlatformClient(session, self.global_config.user_agent, self.global_config.debug_mode)
-            return await client.fetch_stream_url(
-                model_config,
-                max_retries=2, retry_delay=3.0
-            )
-        finally:
-            await session.close()
-
-    async def stop_recording(self, model_name: str):
-        session = self.sessions.get(model_name)
-        if session and session.process:
-            self.logger.info(f"Stopping recording for {model_name}")
-            if session.feeder_task and not session.feeder_task.done():
-                session.feeder_task.cancel()
-                try:
-                    await asyncio.wait_for(asyncio.shield(session.feeder_task), timeout=3)
-                except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
-                    pass
-            process = session.process
-            try:
-                process.terminate()
-            except ProcessLookupError:
-                pass
-            deadline = time.time() + 10
-            while process.poll() is None and time.time() < deadline:
-                await asyncio.sleep(0.2)
-            if process.poll() is None:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-            # Slot release + finalization handled by _monitor_process once ffmpeg exits
-
-    async def stop_all(self):
-        for model_name in list(self.sessions.keys()):
-            await self.stop_recording(model_name)
-
-    def get_recording_stats(self) -> Dict[str, Any]:
-        stats = {}
-        for name, session in self.sessions.items():
-            bw = self.bandwidth_monitor.update(name)
-            stats[name] = {
-                'platform': session.platform,
-                'duration': time.time() - session.start_time,
-                'pid': session.process.pid if session.process else None,
-                'restart_count': session.restart_count,
-                'output_file': session.output_file,
-            }
-            if bw:
-                stats[name]['size_bytes'] = bw['bytes']
-                #stats[name]['speed'] = self.bandwidth_monitor.format_speed(bw['speed_bps'])
-                #stats[name]['peak_speed'] = self.bandwidth_monitor.format_speed(bw['peak_bps'])
-        return stats
-
-# ========================
-# Model Monitor
-# ========================
-
-class ModelMonitor:
-    def __init__(self, model: ModelConfig, global_config: GlobalConfig,
-                 platform_client: PlatformClient, recorder: Recorder,
-                 metadata_logger: MetadataLogger, notifications: NotificationManager,
-                 download_queue: DownloadQueue):
-        self.model = model
-        self.global_config = global_config
-        self.platform_client = platform_client
-        self.recorder = recorder
-        self.metadata_logger = metadata_logger
-        self.notifications = notifications
-        self.download_queue = download_queue
-        self.logger = logging.getLogger(f"monitor.{model.name}")
-        self.running = False
-        self.last_status = None
-        self.offline_since = None
-        self.consecutive_offline = 0
-
-    async def run(self):
-        self.running = True
-
-        if self.global_config.edging_mode:
-            delay = random.uniform(0, 600)
-            self.logger.info(f"Edging mode: waiting {delay:.0f}s before first check")
-            await asyncio.sleep(delay)
-
-        while self.running:
-            if not self.model.enabled:
-                self.logger.info(f"Model {self.model.name} disabled, stopping monitor")
-                break
-
-            await self._check_and_record()
-
-            interval = self.model.check_interval or self.global_config.check_interval
-            await asyncio.sleep(interval)
-
-    async def _validate_stream(self, stream_url: str) -> bool:
-        """Deep validation: master playlist must expose a live media playlist with
-        reachable segments. Catches private/VOD/token-blocked rooms that still
-        serve a master playlist. For StripChat this goes through the MOUFLON
-        feeder resolution (psch/pkey auth + advert detection)."""
-        if self.model.platform == "chaturbate":
-            # CB edge tokens bind to whichever HTTP client touches them FIRST.
-            # Probing with aiohttp would claim the session and every subsequent
-            # ffmpeg request returns 403 -> empty recordings. Rely on the API
-            # room_status gate + the no-data watchdog instead.
-            return True
-
-        if self.model.platform == "stripchat":
-            try:
-                feeder = StripchatHLSFeeder(
-                    session=self.platform_client.session,
-                    logger=self.logger,
-                    model_name=self.model.name,
-                    master_url=stream_url,
-                    referer=self.model.stripchat_domain
-                )
-                ok = await feeder.resolve()
-                if not ok:
-                    self.logger.debug(f"[{self.model.name}] Stream validation: no live MOUFLON playlist")
-                return ok
-            except Exception as e:
-                self.logger.debug(f"[{self.model.name}] Stream validation error: {e}")
-                return False
-
-        headers = {
-            "User-Agent": self.global_config.user_agent,
-            "Accept": "*/*",
-        }
-        if self.model.platform != "chaturbate":
-            referer = self.model.stripchat_domain
-            headers["Referer"] = referer
-            headers["Origin"] = referer
-        try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            session = self.platform_client.session
-
-            async with session.get(stream_url, headers=headers, timeout=timeout) as resp:
-                if resp.status != 200:
-                    self.logger.debug(f"[{self.model.name}] Stream validation: master HTTP {resp.status}")
-                    return False
-                master_text = await resp.text()
-            if not master_text.startswith('#EXTM3U'):
-                return False
-
-            media_url = stream_url
-            media_text = master_text
-            variant = next((l.strip() for l in master_text.splitlines()
-                            if l.strip() and not l.startswith('#')), None)
-            if variant:
-                media_url = urljoin(stream_url, variant)
-                async with session.get(media_url, headers=headers, timeout=timeout) as resp2:
-                    if resp2.status != 200:
-                        self.logger.debug(f"[{self.model.name}] Stream validation: media playlist HTTP {resp2.status}")
-                        return False
-                    media_text = await resp2.text()
-
-            if '#EXT-X-ENDLIST' in media_text:
-                self.logger.debug(f"[{self.model.name}] Stream validation: playlist is VOD/ended")
-                return False
-
-            segments = [l.strip() for l in media_text.splitlines()
-                        if l.strip() and not l.startswith('#')]
-            if not segments:
-                return False
-
-            seg_url = urljoin(media_url, segments[0])
-            try:
-                async with session.get(seg_url, headers={**headers, "Range": "bytes=0-1023"},
-                                       timeout=aiohttp.ClientTimeout(total=10)) as resp3:
-                    if resp3.status not in (200, 206):
-                        self.logger.debug(f"[{self.model.name}] Stream validation: segment HTTP {resp3.status}")
-                        return False
-                    chunk = await resp3.read()
-                    if not chunk:
-                        return False
-            except asyncio.TimeoutError:
-                self.logger.debug(f"[{self.model.name}] Stream validation: segment fetch timed out")
-                return False
-
-            return True
-        except Exception as e:
-            self.logger.debug(f"[{self.model.name}] Stream validation error: {e}")
-        return False
-
-    async def _check_and_record(self):
-        stream_url = await self.download_queue.fetch_with_semaphore(
-            self.platform_client.fetch_stream_url,
-            self.model,
-            max_retries=self.global_config.download_queue.fetch_retry_attempts,
-            retry_delay=self.global_config.download_queue.fetch_retry_delay
-        )
-
-        if stream_url:
-            # Validate the stream actually delivers data before recording
-            if not await self._validate_stream(stream_url):
-                if self.last_status == "online":
-                    self.logger.info(f"[{self.model.name}] Stream URL returned invalid/404 - treating as OFFLINE")
-                stream_url = None
-
-        if stream_url:
-            was_in_grace = self.download_queue.cancel_offline_grace(self.model.name)
-            if was_in_grace:
-                self.logger.info(f"[{self.model.name}] Came back online during grace period, continuing recording")
-
-            if self.last_status != "online":
-                self.logger.info(f"[{self.model.name}] ONLINE - Stream URL found")
-                self.metadata_logger.log_event(self.model.name, "online", {"stream_url": stream_url})
-                await self.notifications.send(self.model.name, "ONLINE",
-                    f"Model is now online", self.model.notifications)
-                self.last_status = "online"
-                self.offline_since = None
-                self.consecutive_offline = 0
-
-            if self.model.name not in self.recorder.sessions:
-                self.logger.info(f"Starting recording for {self.model.name}")
-                await self.recorder.start_recording(self.model, stream_url)
-            else:
-                self.logger.debug(f"Already recording {self.model.name}")
-        else:
-            if self.last_status != "offline":
-                self.logger.info(f"[{self.model.name}] OFFLINE")
-                self.metadata_logger.log_event(self.model.name, "offline", {})
-                await self.notifications.send(self.model.name, "OFFLINE",
-                    f"Model went offline", self.model.notifications)
-                self.last_status = "offline"
-                self.offline_since = time.time()
-                self.consecutive_offline = 1
-            else:
-                self.consecutive_offline += 1
-
-            if self.model.name in self.recorder.sessions and not self.download_queue.is_in_grace_period(self.model.name):
-                self.logger.info(f"Stream ended for {self.model.name}, starting grace period ({self.global_config.download_queue.offline_grace_seconds}s)")
-                self.download_queue.schedule_offline_grace(
-                    self.model.name,
-                    lambda: self._stop_recording_after_grace(self.model.name),
-                    self.global_config.download_queue.offline_grace_seconds
-                )
-
-    async def _stop_recording_after_grace(self, model_name: str):
-        if model_name in self.recorder.sessions:
-            self.logger.info(f"Grace period ended for {model_name}, stopping recording")
-            await self.recorder.stop_recording(model_name)
-        else:
-            self.logger.debug(f"Recording already stopped for {model_name} before grace period ended")
-
-    def stop(self):
-        self.running = False
-
-# ========================
-# Health Check Server
-# ========================
-
-class HealthServer:
-    def __init__(self, port: int, recorder: Recorder, monitors: List[ModelMonitor], ctbcap_app: 'CtbCap'):
-        self.port = port
-        self.recorder = recorder
-        self.monitors = monitors
-        self.ctbcap_app = ctbcap_app
-        self.app = None
-        self.runner = None
-
-    async def start(self):
-        if not HAS_AIOHTTP_WEB:
-            logging.getLogger("health").warning("aiohttp.web not available, health check disabled")
-            return
-
-        self.app = web.Application()
-        self.app.router.add_get('/health', self.health_handler)
-        self.app.router.add_get('/status', self.status_handler)
-        self.app.router.add_get('/metrics', self.metrics_handler)
-        self.app.router.add_get('/recordings', self.recordings_handler)
-        self.app.router.add_post('/control/{model}/stop', self.stop_model_handler)
-        self.app.router.add_post('/control/stop-all', self.stop_all_handler)
-        self.app.router.add_post('/control/reload-config', self.reload_config_handler)
-        self.app.router.add_post('/control/discover', self.discover_handler)
-        self.app.router.add_post('/control/add', self.add_model_handler)
-
-        self.runner = web.AppRunner(self.app)
-        await self.runner.setup()
-        site = web.TCPSite(self.runner, '0.0.0.0', self.port)
-        await site.start()
-        logging.getLogger("health").info(f"Health server started on port {self.port}")
-
-    async def stop(self):
-        if self.runner:
-            await self.runner.cleanup()
-
-    async def health_handler(self, request):
-        return web.json_response({"status": "healthy", "version": VERSION, "timestamp": datetime.now(timezone.utc).isoformat()})
-
-    async def status_handler(self, request):
-        sessions = {}
-        for name, session in self.recorder.sessions.items():
-            bw = self.recorder.bandwidth_monitor.update(name)
-            entry = {
-                "model": session.model,
-                "platform": session.platform,
-                "recording": True,
-                "duration": time.time() - session.start_time,
-                "pid": session.process.pid if session.process else None,
-                "restart_count": session.restart_count,
-            }
-            if bw:
-                entry['size_bytes'] = bw['bytes']
-                #entry['speed'] = self.recorder.bandwidth_monitor.format_speed(bw['speed_bps'])
-            sessions[name] = entry
-
-        monitors = {}
-        for m in self.monitors:
-            monitors[m.model.name] = {
-                "enabled": m.model.enabled,
-                "platform": m.model.platform,
-                "last_status": m.last_status,
-                "running": m.running,
-                "consecutive_offline": m.consecutive_offline,
-            }
-
-        return web.json_response({
-            "recordings": sessions,
-            "monitors": monitors,
-            "total_models": len(self.monitors),
-            "active_recordings": len(sessions),
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
-
-    async def recordings_handler(self, request):
-        stats = self.recorder.get_recording_stats()
-        return web.json_response({"recordings": stats})
-
-    async def stop_model_handler(self, request):
-        model_name = request.match_info['model']
-        await self.recorder.stop_recording(model_name)
-        for m in self.monitors:
-            if m.model.name == model_name:
-                m.stop()
-                break
-        return web.json_response({"status": "stopped", "model": model_name})
-
-    async def stop_all_handler(self, request):
-        await self.recorder.stop_all()
-        for m in self.monitors:
-            m.stop()
-        return web.json_response({"status": "all stopped"})
-
-    async def reload_config_handler(self, request):
-        try:
-            await self.ctbcap_app.reload_config()
-            return web.json_response({"status": "reloaded"})
-        except Exception as e:
-            return web.json_response({"status": "error", "message": str(e)}, status=500)
-
-    async def discover_handler(self, request):
-        try:
-            platform = request.query.get('platform', self.ctbcap_app.config.global_.platform)
-            if platform == 'stripchat':
-                online = await self.ctbcap_app.platform_client.discover_stripchat_online()
-            elif platform == 'chaturbate':
-                online = await self.ctbcap_app.platform_client.discover_chaturbate_online()
-            else:
-                return web.json_response({"error": f"Unknown platform: {platform}"}, status=400)
-            return web.json_response({"platform": platform, "online_count": len(online), "models": online})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def add_model_handler(self, request):
-        try:
-            data = await request.json()
-            name = data.get('name')
-            if not name:
-                return web.json_response({"error": "name is required"}, status=400)
-            platform = data.get('platform', self.ctbcap_app.config.global_.platform)
-            if platform not in ('chaturbate', 'stripchat'):
-                return web.json_response({"error": f"Unknown platform: {platform}"}, status=400)
-            existing_names = {m.model.name for m in self.monitors}
-            if name in existing_names:
-                return web.json_response({"error": f"Model '{name}' already monitored"}, status=409)
-            mgr = ConfigManager(self.ctbcap_app.config_path)
-            if not mgr.add_model(name, platform=platform):
-                return web.json_response({"error": f"Model '{name}' already in config"}, status=409)
-            new_config = Config.from_yaml(self.ctbcap_app.config_path)
-            model_cfg = next((m for m in new_config.models if m.name == name), None)
-            if not model_cfg:
-                return web.json_response({"error": "Failed to load model from config"}, status=500)
-            monitor = ModelMonitor(
-                model=model_cfg,
-                global_config=self.ctbcap_app.config.global_,
-                platform_client=self.ctbcap_app.platform_client,
-                recorder=self.ctbcap_app.recorder,
-                metadata_logger=self.ctbcap_app.metadata_logger,
-                notifications=self.ctbcap_app.notifications,
-                download_queue=self.ctbcap_app.download_queue,
-            )
-            self.monitors.append(monitor)
-            asyncio.create_task(monitor.run())
-            self.ctbcap_app.config = new_config
-            return web.json_response({"status": "added", "model": name, "platform": platform, "auto_started": True})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def metrics_handler(self, request):
-        lines = [
-            f"ctbcap_recordings_active {len(self.recorder.sessions)}",
-            f"ctbcap_monitors_total {len(self.monitors)}",
-            f"ctbcap_monitors_running {sum(1 for m in self.monitors if m.running)}",
-            f"ctbcap_monitors_online {sum(1 for m in self.monitors if m.last_status == 'online')}",
-            f"ctbcap_monitors_offline {sum(1 for m in self.monitors if m.last_status == 'offline')}",
-        ]
-        for name, session in self.recorder.sessions.items():
-            elapsed = int(time.time() - session.start_time)
-            hours, remainder = divmod(elapsed, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            lines.append(f'ctbcap_recording_duration{{model="{name}"}} "{duration_str}"')
-        return web.Response(text='\n'.join(lines) + '\n', content_type='text/plain')
-
-# ========================
-# Main Application
-# ========================
-
-class CtbCap:
-    def __init__(self, config: Config, config_path: str = None):
-        self.config = config
-        self.config_path = config_path
-        self.session: Optional[aiohttp.ClientSession] = None
-        self.platform_client: Optional[PlatformClient] = None
-        self.metadata_logger: Optional[MetadataLogger] = None
-        self.notifications: Optional[NotificationManager] = None
-        self.recorder: Optional[Recorder] = None
-        self.download_queue: Optional[DownloadQueue] = None
-        self.disk_monitor: Optional[DiskSpaceMonitor] = None
-        self.bandwidth_monitor: Optional[BandwidthMonitor] = None
-        self.monitors: List[ModelMonitor] = []
-        self.health_server: Optional[HealthServer] = None
-        self.logger = logging.getLogger("ctbcap")
-        self.running = False
-
-    async def start(self):
-        import ssl as _ssl
-        setup_logging(self.config.global_.log_path, self.config.global_.debug_mode, "ctbcap")
-
-        max_concurrent = max(
-            self.config.global_.download_queue.max_concurrent_fetches,
-            self.config.global_.download_queue.max_concurrent_downloads
-        ) * 2
-        ssl_context = _ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = _ssl.CERT_NONE
-        connector = aiohttp.TCPConnector(limit=max_concurrent, limit_per_host=30, ssl=ssl_context)
-        timeout = aiohttp.ClientTimeout(total=30, connect=10)
-        self.session = aiohttp.ClientSession(connector=connector, timeout=timeout)
-
-        self.platform_client = PlatformClient(
-            self.session,
-            self.config.global_.user_agent,
-            self.config.global_.debug_mode
-        )
-
-        self.metadata_logger = MetadataLogger(self.config.global_.metadata.log_path)
-        self.notifications = NotificationManager(self.config.global_.notifications, self.session)
-        self.download_queue = DownloadQueue(self.config.global_.download_queue)
-        self.disk_monitor = DiskSpaceMonitor(self.config.global_.download_queue.min_free_space_mib)
-        self.bandwidth_monitor = BandwidthMonitor()
-
-        self.recorder = Recorder(self.config.global_, self.metadata_logger, self.notifications,
-                                self.download_queue, self.disk_monitor, self.bandwidth_monitor)
-        self.recorder.http_session = self.session
-
-        enabled_count = 0
-        for model in self.config.models:
-            if not model.enabled:
-                self.logger.info(f"Skipping disabled model: {model.name}")
-                continue
-
-            monitor = ModelMonitor(
-                model=model,
-                global_config=self.config.global_,
-                platform_client=self.platform_client,
-                recorder=self.recorder,
-                metadata_logger=self.metadata_logger,
-                notifications=self.notifications,
-                download_queue=self.download_queue
-            )
-            self.monitors.append(monitor)
-            enabled_count += 1
-
-        self.logger.info(f"Configured {enabled_count} models for monitoring")
-
-        if self.config.global_.health_check.enabled:
-            self.health_server = HealthServer(
-                self.config.global_.health_check.port,
-                self.recorder,
-                self.monitors,
-                self
-            )
-            await self.health_server.start()
-
-        self.running = True
-        tasks = [monitor.run() for monitor in self.monitors]
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def reload_config(self):
-        self.logger.info("Reloading config...")
-        try:
-            new_config = Config.from_yaml(self.config_path)
-        except Exception as e:
-            self.logger.error(f"Failed to reload config: {e}")
-            raise
-
-        existing_names = {m.model.name for m in self.monitors}
-        new_models = [m for m in new_config.models if m.name not in existing_names]
-
-        for model in new_models:
-            if not model.enabled:
-                self.logger.info(f"Skipping disabled model: {model.name}")
-                continue
-
-            monitor = ModelMonitor(
-                model=model,
-                global_config=new_config.global_,
-                platform_client=self.platform_client,
-                recorder=self.recorder,
-                metadata_logger=self.metadata_logger,
-                notifications=self.notifications,
-                download_queue=self.download_queue
-            )
-            self.monitors.append(monitor)
-            asyncio.create_task(monitor.run())
-            self.logger.info(f"Started monitoring new model: {model.name}")
-
-        for monitor in self.monitors:
-            for new_model in new_config.models:
-                if monitor.model.name == new_model.name:
-                    monitor.model.check_interval = new_model.check_interval or new_config.global_.check_interval
-                    monitor.model.retry_interval = new_model.retry_interval or new_config.global_.retry_interval
-                    monitor.model.enabled = new_model.enabled
-                    if not new_model.enabled:
-                        monitor.stop()
-                        await self.recorder.stop_recording(monitor.model.name)
-                    break
-
-        self.config = new_config
-        self.logger.info(f"Config reloaded. Total monitors: {len(self.monitors)}")
-
-    async def stop(self):
-        self.logger.info("Shutting down...")
-        self.running = False
-
-        for monitor in self.monitors:
-            monitor.stop()
-
-        await self.recorder.stop_all()
-
-        if self.health_server:
-            await self.health_server.stop()
-
-        if self.session:
-            await self.session.close()
-
-        self.logger.info("Shutdown complete")
-
-# ========================
-# Daemon / Background Helpers
-# ========================
-
-def _termux_wake_lock(acquire: bool = True):
-    try:
-        cmd = 'termux-wake-lock' if acquire else 'termux-wake-unlock'
-        subprocess.run([cmd], capture_output=True, timeout=5)
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
-
-def _write_pid():
-    with open(PID_FILE, 'w') as f:
-        f.write(str(os.getpid()))
-
-def _remove_pid():
-    try:
-        os.remove(PID_FILE)
-    except FileNotFoundError:
-        pass
-
-def _read_pid() -> Optional[int]:
-    try:
-        with open(PID_FILE, 'r') as f:
-            return int(f.read().strip())
-    except (FileNotFoundError, ValueError):
-        return None
-
-def daemon_start():
-    _termux_wake_lock(True)
-    _write_pid()
-    print(f"Daemon started (PID: {os.getpid()})")
-
-def daemon_stop():
-    pid = _read_pid()
-    if not pid:
-        print("No running daemon found (no PID file)")
-        return False
-    try:
-        os.kill(pid, signal.SIGTERM)
-        _termux_wake_lock(False)
-        _remove_pid()
-        print(f"Daemon (PID: {pid}) stopped")
-        return True
-    except ProcessLookupError:
-        _remove_pid()
-        print("Daemon not running (stale PID file removed)")
-        return False
-
-# ========================
-# Tmux Integration
-# ========================
-
-class TmuxManager:
-    """Manage tmux sessions for CtbCap multi-model recording."""
-
-    SESSION_NAME = "ctbcap"
-
-    @staticmethod
-    def is_tmux_available() -> bool:
-        return shutil.which('tmux') is not None
-
-    @staticmethod
-    def kill_session():
-        subprocess.run(['tmux', 'kill-session', '-t', TmuxManager.SESSION_NAME],
-                       capture_output=True, timeout=5)
-
-    @staticmethod
-    def start_recording_session(config_path: str, models: List[ModelConfig] = None):
-        """Start a tmux session with one pane per model for individual logging."""
-        if not TmuxManager.is_tmux_available():
-            print("tmux is not installed. Install it with: pkg install tmux (Termux) or apt install tmux")
-            return
-
-        TmuxManager.kill_session()
-
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        python_bin = sys.executable
-
-        subprocess.run([
-            'tmux', 'new-session', '-d', '-s', TmuxManager.SESSION_NAME,
-            '-x', '220', '-y', '50',
-            f'{python_bin} {script_dir}/ctbcap_multi.py start -c {config_path}'
-        ], timeout=10)
-
-        print(f"tmux session '{TmuxManager.SESSION_NAME}' started")
-        print(f"Attach with: tmux attach -t {TmuxManager.SESSION_NAME}")
-        print(f"Or run: ./ctbcap_multi.py tmux-attach")
-
-    @staticmethod
-    def start_dashboard(config_path: str):
-        """Start a tmux session with a status dashboard pane."""
-        if not TmuxManager.is_tmux_available():
-            print("tmux is not installed.")
-            return
-
-        TmuxManager.kill_session()
-
-        subprocess.run([
-            'tmux', 'new-session', '-d', '-s', TmuxManager.SESSION_NAME,
-            '-x', '120', '-y', '40',
-        ], timeout=10)
-
-        config = Config.from_yaml(config_path)
-        model_count = len([m for m in config.models if m.enabled])
-
-        subprocess.run([
-            'tmux', 'send-keys', '-t', TmuxManager.SESSION_NAME,
-            f'watch -n 5 "curl -s http://localhost:{config.global_.health_check.port}/status 2>/dev/null | python3 -m json.tool 2>/dev/null || echo \'Waiting for health server...\'"',
-            'C-m'
-        ], timeout=5)
-
-        print(f"Dashboard tmux session started")
-        print(f"Models configured: {model_count}")
-        print(f"Attach with: tmux attach -t {TmuxManager.SESSION_NAME}")
-
-    @staticmethod
-    def attach():
-        if not TmuxManager.is_tmux_available():
-            print("tmux is not installed.")
-            return
-        subprocess.run(['tmux', 'attach', '-t', TmuxManager.SESSION_NAME])
-
-    @staticmethod
-    def is_running() -> bool:
-        result = subprocess.run(['tmux', 'has-session', '-t', TmuxManager.SESSION_NAME],
-                               capture_output=True, timeout=5)
-        return result.returncode == 0
-
-# ========================
-# CLI Commands
-# ========================
-
-def _try_start_model(config_path: str, name: str, platform: str = None):
-    """Try to auto-start a model via the running health server."""
-    import urllib.request
-    import json as json_mod
-    config = Config.from_yaml(config_path)
-    port = config.global_.health_check.port
-    url = f'http://localhost:{port}/control/add'
-    payload = {"name": name}
-    if platform:
-        payload["platform"] = platform
-    try:
-        req = urllib.request.Request(
-            url,
-            data=json_mod.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            result = json_mod.loads(resp.read())
-            print(f"  Auto-started recording for '{name}'")
-            return True
-    except urllib.error.URLError:
-        print(f"  Daemon not running - model will be recorded on next 'start'")
-        return False
-    except Exception as e:
-        print(f"  Warning: Could not auto-start '{name}': {e}")
-        return False
-
-def cmd_add(args, config_path: str):
-    """Add a model to config.yaml, optionally auto-start recording."""
-    mgr = ConfigManager(config_path)
-    name = args.name
-    platform = args.platform
-    check_interval = args.check_interval
-    retry_interval = args.retry_interval
-    cut_time = args.cut_time
-    auto_start = getattr(args, 'start', False)
-
-    if mgr.add_model(name, platform=platform, check_interval=check_interval,
-                     retry_interval=retry_interval, cut_time=cut_time):
-        print(f"Added model '{name}' to {config_path}")
-        print(f"  Platform: {platform or '(from global)'}")
-        if check_interval:
-            print(f"  Check interval: {check_interval}s")
-        if retry_interval:
-            print(f"  Retry interval: {retry_interval}s")
-        if cut_time:
-            print(f"  Cut time: {cut_time}s")
-        if auto_start:
-            _try_start_model(config_path, name, platform)
-    else:
-        print(f"Model '{name}' already exists in config")
-        return 1
-    return 0
-
-def cmd_add_bulk(args, config_path: str):
-    """Add multiple models at once: ctbcap_multi.py add-bulk name1,name2,name3 --platform stripchat"""
-    mgr = ConfigManager(config_path)
-    names = [n.strip() for n in args.names.split(',') if n.strip()]
-    if not names:
-        print("No model names provided")
-        return 1
-
-    auto_start = getattr(args, 'start', False)
-    models_list = []
-    for name in names:
-        models_list.append({
-            'name': name,
-            'platform': args.platform,
-            'check_interval': args.check_interval,
-            'retry_interval': args.retry_interval,
-            'cut_time': args.cut_time,
-        })
-
-    added = mgr.add_models_bulk(models_list)
-    print(f"Added {added} new models ({len(names) - added} already existed)")
-    if added > 0:
-        print(f"Total models in config: {len(mgr.list_models())}")
-    if auto_start and added > 0:
-        for name in names:
-            _try_start_model(config_path, name, args.platform)
-    return 0
-
-def cmd_remove(args, config_path: str):
-    """Remove a model from config.yaml."""
-    mgr = ConfigManager(config_path)
-    if mgr.remove_model(args.name):
-        print(f"Removed model '{args.name}' from {config_path}")
-    else:
-        print(f"Model '{args.name}' not found in config")
-        return 1
-    return 0
-
-def cmd_list(args, config_path: str):
-    """List all configured models."""
-    mgr = ConfigManager(config_path)
-    models = mgr.list_models()
-    if not models:
-        print("No models configured")
-        return 0
-
-    enabled = [m for m in models if m.get('enabled', True)]
-    disabled = [m for m in models if not m.get('enabled', True)]
-
-    print(f"\n{'='*60}")
-    print(f" CtbCap Models ({len(enabled)} enabled, {len(disabled)} disabled)")
-    print(f"{'='*60}")
-
-    platforms = {}
-    for m in models:
-        p = m.get('platform', '?')
-        if p not in platforms:
-            platforms[p] = []
-        platforms[p].append(m)
-
-    for platform, pmodels in sorted(platforms.items()):
-        print(f"\n  [{platform.upper()}] ({len(pmodels)} models)")
-        print(f"  {'-'*50}")
-        for m in sorted(pmodels, key=lambda x: x.get('name', '')):
-            status = "ON" if m.get('enabled', True) else "OFF"
-            interval = m.get('check_interval', '?')
-            print(f"    [{status}] {m.get('name', '?'):<30} check={interval}s")
-
-    print(f"\n{'='*60}")
-    print(f" Total: {len(models)} models across {len(platforms)} platforms")
-    print(f"{'='*60}\n")
-    return 0
-
-def cmd_status(args, config_path: str):
-    """Show live recording status from the health server."""
-    import urllib.request
-    import json as json_mod
-
-    config = Config.from_yaml(config_path)
-    port = config.global_.health_check.port
-
-    try:
-        url = f"http://localhost:{port}/status"
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json_mod.loads(resp.read())
-    except Exception as e:
-        print(f"Cannot connect to health server on port {port}")
-        print(f"Is CtbCap running? Start with: ./ctbcap_multi.py start")
-        return 1
-
-    recordings = data.get('recordings', {})
-    monitors = data.get('monitors', {})
-
-    print(f"\n{'='*70}")
-    print(f" CtbCap Status - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*70}")
-
-    if recordings:
-        print(f"\n  ACTIVE RECORDINGS ({len(recordings)})")
-        print(f"  {'-'*66}")
-        for name, info in sorted(recordings.items()):
-            dur = info.get('duration', 0)
-            h, rem = divmod(int(dur), 3600)
-            m, s = divmod(rem, 60)
-            size = info.get('size_bytes', 0)
-            speed = info.get('speed', 'N/A')
-            restarts = info.get('restart_count', 0)
-            pid = info.get('pid', '?')
-            size_str = BandwidthMonitor().format_size(size)
-            print(f"    {name:<30} {h:02d}:{m:02d}:{s:02d}  {size_str:>10}  {speed:>12}  pid={pid}  restarts={restarts}")
-    else:
-        print(f"\n  No active recordings")
-
-    online = [n for n, i in monitors.items() if i.get('last_status') == 'online']
-    offline = [n for n, i in monitors.items() if i.get('last_status') == 'offline']
-    unknown = [n for n, i in monitors.items() if i.get('last_status') is None]
-
-    print(f"\n  MONITORS: {len(monitors)} total | {len(online)} online | {len(offline)} offline | {len(unknown)} unknown")
-
-    if online:
-        print(f"\n  ONLINE ({len(online)})")
-        for name in sorted(online):
-            print(f"    [ON]  {name}")
-
-    if args.verbose and offline:
-        print(f"\n  OFFLINE ({len(offline)})")
-        for name in sorted(offline):
-            info = monitors[name]
-            consec = info.get('consecutive_offline', 0)
-            print(f"    [OFF] {name} (consecutive: {consec})")
-
-    print(f"\n{'='*70}\n")
-    return 0
-
-def cmd_discover(args, config_path: str):
-    """Discover ALL online models on a platform and optionally auto-add them."""
-    config = Config.from_yaml(config_path)
-    platform = args.platform or config.global_.platform
-
-    async def _discover():
-        import ssl as _ssl
-        ssl_context = _ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = _ssl.CERT_NONE
-        connector = aiohttp.TCPConnector(limit=20, ssl=ssl_context)
-        timeout = aiohttp.ClientTimeout(total=15)
-        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-            client = PlatformClient(session, config.global_.user_agent, False)
-            if platform == 'stripchat':
-                return await client.discover_stripchat_online(limit=args.limit)
-            elif platform == 'chaturbate':
-                return await client.discover_chaturbate_online(limit=args.limit)
-            else:
-                print(f"Unknown platform: {platform}")
-                return []
-
-    print(f"Discovering online models on {platform}...")
-    online = asyncio.run(_discover())
-
-    if not online:
-        print("No online models found (or API unavailable)")
-        return 0
-
-    print(f"\n{'='*70}")
-    print(f" Found {len(online)} ONLINE models on {platform.upper()}")
-    print(f"{'='*70}")
-
-    existing = {m.get('name') for m in ConfigManager(config_path).list_models()}
-    new_models = [m for m in online if m['name'] not in existing]
-
-    print(f"  Already configured: {len(online) - len(new_models)}")
-    print(f"  New (not in config): {len(new_models)}")
-
-    for m in sorted(new_models, key=lambda x: x.get('name', '')):
-        viewers = m.get('viewers', 0)
-        print(f"    {m['name']:<35} viewers: {viewers}")
-
-    if args.auto_add and new_models:
-        print(f"\nAdding {len(new_models)} new models to config...")
-        mgr = ConfigManager(config_path)
-        added = mgr.add_models_bulk([
-            {'name': m['name'], 'platform': m['platform']}
-            for m in new_models
-        ])
-        print(f"Added {added} models to {config_path}")
-    elif new_models:
-        print(f"\nTo add all new models, run:")
-        names = ','.join(m['name'] for m in new_models)
-        print(f"  ./ctbcap_multi.py add-bulk \"{names}\" --platform {platform}")
-
-    print(f"\n{'='*70}\n")
-    return 0
-
-def cmd_dedup(args, config_path: str):
-    """Remove duplicate model entries from config.yaml."""
-    mgr = ConfigManager(config_path)
-    before = len(mgr.list_models())
-    removed = mgr.dedup()
-    after = len(mgr.list_models())
-    if removed > 0:
-        print(f"Removed {removed} duplicate entries ({before} -> {after} models)")
-    else:
-        print(f"No duplicates found ({before} models)")
-    return 0
-
-def cmd_tmux(args, config_path: str):
-    """Start CtbCap in a tmux session."""
-    TmuxManager.start_recording_session(config_path)
-    return 0
-
-def cmd_tmux_dashboard(args, config_path: str):
-    """Start tmux dashboard view."""
-    TmuxManager.start_dashboard(config_path)
-    return 0
-
-def cmd_tmux_attach(args, config_path: str):
-    """Attach to running tmux session."""
-    TmuxManager.attach()
-    return 0
-
-def cmd_tmux_stop(args, config_path: str):
-    """Stop tmux session."""
-    TmuxManager.kill_session()
-    print(f"tmux session '{TmuxManager.SESSION_NAME}' killed")
-    return 0
-
-# ========================
-# CLI Entry Point
-# ========================
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="CtbCap Multi-Model Recorder v2.0",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s start                          Start recording all configured models
-  %(prog)s start -c myconfig.yaml         Start with custom config
-  %(prog)s start -D                       Start as daemon (background)
-  %(prog)s add mymodel --platform stripchat   Add a model to config
-  %(prog)s add mymodel --platform stripchat --start   Add and auto-start recording
-  %(prog)s add-bulk "name1,name2,name3" --platform stripchat   Add multiple models
-  %(prog)s add-bulk "name1,name2" --start --platform stripchat   Add and auto-start
-  %(prog)s remove mymodel                 Remove a model from config
-  %(prog)s list                           List all configured models
-  %(prog)s status                         Show live recording status
-  %(prog)s discover                       Discover ALL online models
-  %(prog)s discover --auto-add            Discover and auto-add new models
-  %(prog)s dedup                          Remove duplicate model entries
-  %(prog)s tmux                           Start in tmux session
-  %(prog)s tmux-dashboard                 Start tmux dashboard
-  %(prog)s stop                           Stop running daemon
-        """)
-    parser.add_argument('-c', '--config', default='./config.yaml', help='Config file path')
-    parser.add_argument('-v', '--version', action='store_true', help='Show version')
-    parser.add_argument('-D', '--daemon', action='store_true', help='Run in background')
-    parser.add_argument('--validate', action='store_true', help='Validate config and exit')
-
-    subparsers = parser.add_subparsers(dest='command', help='Commands')
-
-    sub_start = subparsers.add_parser('start', help='Start recording all models')
-    sub_start.set_defaults(func=lambda args: None)
-
-    sub_add = subparsers.add_parser('add', help='Add a model to config.yaml')
-    sub_add.add_argument('name', help='Model/username to add')
-    sub_add.add_argument('--platform', '-p', choices=['chaturbate', 'stripchat'], help='Platform (default: from global config)')
-    sub_add.add_argument('--check-interval', type=int, help='Check interval in seconds')
-    sub_add.add_argument('--retry-interval', type=int, help='Retry interval in seconds')
-    sub_add.add_argument('--cut-time', type=int, help='Cut time in seconds (0=continuous)')
-    sub_add.add_argument('--start', '-s', action='store_true', help='Auto-start recording immediately')
-    sub_add.set_defaults(func=cmd_add)
-
-    sub_bulk = subparsers.add_parser('add-bulk', help='Add multiple models at once')
-    sub_bulk.add_argument('names', help='Comma-separated model names')
-    sub_bulk.add_argument('--platform', '-p', choices=['chaturbate', 'stripchat'], default='stripchat')
-    sub_bulk.add_argument('--check-interval', type=int, help='Check interval in seconds')
-    sub_bulk.add_argument('--retry-interval', type=int, help='Retry interval in seconds')
-    sub_bulk.add_argument('--cut-time', type=int, help='Cut time in seconds')
-    sub_bulk.add_argument('--start', '-s', action='store_true', help='Auto-start recording immediately')
-    sub_bulk.set_defaults(func=cmd_add_bulk)
-
-    sub_remove = subparsers.add_parser('remove', help='Remove a model from config.yaml')
-    sub_remove.add_argument('name', help='Model/username to remove')
-    sub_remove.set_defaults(func=cmd_remove)
-
-    sub_list = subparsers.add_parser('list', help='List all configured models')
-    sub_list.set_defaults(func=cmd_list)
-
-    sub_status = subparsers.add_parser('status', help='Show recording status')
-    sub_status.add_argument('--verbose', '-V', action='store_true', help='Show offline models too')
-    sub_status.set_defaults(func=cmd_status)
-
-    sub_discover = subparsers.add_parser('discover', help='Discover ALL online models')
-    sub_discover.add_argument('--platform', '-p', choices=['chaturbate', 'stripchat'], help='Platform to scan')
-    sub_discover.add_argument('--limit', type=int, default=500, help='Max models to scan (default: 500)')
-    sub_discover.add_argument('--auto-add', '-a', action='store_true', help='Automatically add new models to config')
-    sub_discover.set_defaults(func=cmd_discover)
-
-    sub_dedup = subparsers.add_parser('dedup', help='Remove duplicate models from config')
-    sub_dedup.set_defaults(func=cmd_dedup)
-
-    sub_tmux = subparsers.add_parser('tmux', help='Start in tmux session')
-    sub_tmux.set_defaults(func=cmd_tmux)
-
-    sub_tmux_dash = subparsers.add_parser('tmux-dashboard', help='Start tmux dashboard')
-    sub_tmux_dash.set_defaults(func=cmd_tmux_dashboard)
-
-    sub_tmux_attach = subparsers.add_parser('tmux-attach', help='Attach to tmux session')
-    sub_tmux_attach.set_defaults(func=cmd_tmux_attach)
-
-    sub_tmux_stop = subparsers.add_parser('tmux-stop', help='Stop tmux session')
-    sub_tmux_stop.set_defaults(func=cmd_tmux_stop)
-
-    sub_stop = subparsers.add_parser('stop', help='Stop running daemon')
-    sub_stop.set_defaults(func=lambda args: None)
-
-    return parser.parse_args()
-
-async def main():
-    args = parse_args()
-
-    if args.version:
-        print(f"CtbCap Multi-Model Recorder v{VERSION}")
-        return 0
-
-    config_path = args.config
-
-    if hasattr(args, 'func') and args.func is not None:
-        if args.command in ('add', 'add-bulk', 'remove', 'list', 'dedup'):
-            if not os.path.exists(config_path):
-                print(f"Config file not found: {config_path}")
-                return 1
-            return args.func(args, config_path)
-        elif args.command == 'discover':
-            return args.func(args, config_path)
-        elif args.command in ('tmux', 'tmux-dashboard', 'tmux-attach', 'tmux-stop'):
-            return args.func(args, config_path)
-        elif args.command == 'status':
-            return args.func(args, config_path)
-        elif args.command == 'start':
-            pass  # Fall through to start the recorder below
-        elif args.command == 'stop':
-            daemon_stop()
-            return 0
-
-    if not os.path.exists(config_path):
-        print(f"Config file not found: {config_path}")
-        print("Create config.yaml with your model list first")
-        return 1
-
-    if getattr(args, 'stop', False):
-        daemon_stop()
-        return 0
-
-    try:
-        config = Config.from_yaml(config_path)
-    except Exception as e:
-        print(f"Failed to parse config: {e}")
-        return 1
-
-    if args.validate:
-        print("Config validation passed")
-        enabled = [m.name for m in config.models if m.enabled]
-        disabled = [m.name for m in config.models if not m.enabled]
-        print(f"Enabled models ({len(enabled)}): {enabled}")
-        if disabled:
-            print(f"Disabled models ({len(disabled)}): {disabled}")
-        return 0
-
-    if not config.models:
-        print("No models configured!")
-        print("Add models with: ./ctbcap_multi.py add <name> --platform stripchat")
-        return 1
-
-    app = CtbCap(config, config_path)
-
-    loop = asyncio.get_running_loop()
-
-    def _signal_handler(sig):
-        logging.getLogger("ctbcap").info(f"Received signal {sig.name}, shutting down...")
-        asyncio.create_task(app.stop())
-
-    def _reload_handler(sig):
-        logging.getLogger("ctbcap").info(f"Received signal {sig.name}, reloading config...")
-        asyncio.create_task(app.reload_config())
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            loop.add_signal_handler(sig, lambda s=sig: _signal_handler(s))
-        except (NotImplementedError, ValueError, OSError):
-            try:
-                signal.signal(sig, lambda s, f: _signal_handler(signal.Signals(s)))
-            except (ValueError, OSError):
-                pass
-
-    try:
-        loop.add_signal_handler(signal.SIGHUP, lambda: _reload_handler(signal.SIGHUP))
-    except (NotImplementedError, ValueError, OSError, AttributeError):
-        try:
-            signal.signal(signal.SIGHUP, lambda s, f: _reload_handler(signal.SIGHUP))
-        except (ValueError, OSError, AttributeError):
-            pass
-
-    for sig, handler in [(signal.SIGUSR1, lambda: asyncio.create_task(app.health_server.stop() if app.health_server else None)),
-                         (signal.SIGUSR2, lambda: asyncio.create_task(app.health_server.start() if app.health_server else None))]:
-        try:
-            loop.add_signal_handler(sig, handler)
-        except (NotImplementedError, ValueError, OSError, AttributeError):
-            try:
-                signal.signal(sig, lambda s, f: handler())
-            except (ValueError, OSError, AttributeError):
-                pass
-
-    enabled_models = [m.name for m in config.models if m.enabled]
-    print(f"CtbCap v{VERSION} starting with {len(enabled_models)} models")
-
-    try:
-        await app.start()
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        logging.getLogger("ctbcap").error(f"Fatal error: {e}", exc_info=True)
-        return 1
-
-    return 0
-
-if __name__ == '__main__':
-    _daemon_mode = '-D' in sys.argv or '--daemon' in sys.argv
-    if _daemon_mode:
-        daemon_start()
-        atexit.register(lambda: (_termux_wake_lock(False), _remove_pid()))
-    try:
-        sys.exit(asyncio.run(main()))
-    except KeyboardInterrupt:
-        pass
+global:
+  save_path: ./ctbcap_rec
+  log_path: ./ctbcap_rec/log
+  save_space_mib: 512
+  log_space_mib: 16
+  cut_time: 0
+  cut_size_mib: 0
+  platform: stripchat
+  user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+  edging_mode: false
+  debug_mode: false
+  ignore_proxy: false
+  check_interval: 30
+  retry_interval: 30
+  ffmpeg_codec: copy
+  ffmpeg_extra_args: ''
+  auto_restart: true
+  max_restart_attempts: 10
+  restart_backoff_base: 5.0
+  restart_backoff_max: 300.0
+  adaptive_check_interval: true
+  min_check_interval: 10
+  max_check_interval: 300
+  priority_boost_online: true
+  auto_discover_enabled: true
+  auto_discover_interval: 600
+  auto_discover_platform: stripchat
+  auto_discover_limit: 1000
+  auto_add_new_models: false
+  web_ui_enabled: false
+  web_ui_port: 8081
+  bandwidth_limit_mbps: 0
+  cpu_limit_percent: 80
+  download_queue:
+    max_concurrent_downloads: 15
+    max_concurrent_fetches: 30
+    offline_grace_seconds: 30
+    fetch_retry_attempts: 3
+    fetch_retry_delay: 3.0
+    min_free_space_mib: 2048
+    adaptive_concurrency: true
+    max_concurrent_downloads_high: 99999
+    max_concurrent_downloads_low: 100
+  notifications:
+    enabled: false
+    telegram:
+      enabled: false
+      bot_token: ''
+      chat_id: ''
+    discord:
+      enabled: false
+      webhook_url: ''
+    ntfy:
+      enabled: false
+      topic: ''
+      server: https://ntfy.sh
+  metadata:
+    enabled: true
+    log_path: ./ctbcap_rec/log/metadata.jsonl
+  health_check:
+    enabled: true
+    port: 8080
+models:
+
+- name: Priyanka011
+  platform: stripchat
+  save_path: ./ctbcap_rec/Priyanka011
+  log_path: ./ctbcap_rec/log/Priyanka011
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Meav_
+  platform: stripchat
+  save_path: ./ctbcap_rec/Meav_
+  log_path: ./ctbcap_rec/log/Meav_
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: soin18
+  platform: stripchat
+  save_path: ./ctbcap_rec/soin18
+  log_path: ./ctbcap_rec/log/soin18
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: yoga_session
+  platform: stripchat
+  save_path: ./ctbcap_rec/yoga_session
+  log_path: ./ctbcap_rec/log/yoga_session
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 3600
+- name: Minakshi-Gi
+  platform: stripchat
+  save_path: ./ctbcap_rec/Minakshi-Gi
+  log_path: ./ctbcap_rec/log/Minakshi-Gi
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: xoxoashi
+  platform: stripchat
+  save_path: ./ctbcap_rec/xoxoashi
+  log_path: ./ctbcap_rec/log/xoxoashi
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Swetie_Priyaaaaa
+  platform: stripchat
+  save_path: ./ctbcap_rec/Swetie_Priyaaaaa
+  log_path: ./ctbcap_rec/log/Swetie_Priyaaaaa
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: DaizyDanny
+  platform: stripchat
+  save_path: ./ctbcap_rec/DaizyDanny
+  log_path: ./ctbcap_rec/log/DaizyDanny
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: ekta_767
+  platform: stripchat
+  save_path: ./ctbcap_rec/ekta_767
+  log_path: ./ctbcap_rec/log/ekta_767
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: test_model_new
+  platform: stripchat
+  save_path: ./ctbcap_rec/test_model_new
+  log_path: ./ctbcap_rec/log/test_model_new
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: hy_selahh
+  platform: stripchat
+  save_path: ./ctbcap_rec/hy_selahh
+  log_path: ./ctbcap_rec/log/hy_selahh
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: iliyana-20
+  platform: stripchat
+  save_path: ./ctbcap_rec/iliyana-20
+  log_path: ./ctbcap_rec/log/iliyana-20
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: cuty_petite
+  platform: chaturbate
+  save_path: ./ctbcap_rec/cuty_petite
+  log_path: ./ctbcap_rec/log/cuty_petite
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: _magic_kis
+  platform: chaturbate
+  save_path: ./ctbcap_rec/_magic_kis
+  log_path: ./ctbcap_rec/log/_magic_kis
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: luxeaura
+  platform: stripchat
+  save_path: ./ctbcap_rec/luxeaura
+  log_path: ./ctbcap_rec/log/luxeaura
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: hot-jerry
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot-jerry
+  log_path: ./ctbcap_rec/log/hot-jerry
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: sweety_cpl-
+  platform: stripchat
+  save_path: ./ctbcap_rec/sweety_cpl-
+  log_path: ./ctbcap_rec/log/sweety_cpl-
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Naina_PG
+  platform: stripchat
+  save_path: ./ctbcap_rec/Naina_PG
+  log_path: ./ctbcap_rec/log/Naina_PG
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+
+- name: leo_kitty
+  platform: chaturbate
+  save_path: ./ctbcap_rec/leo_kitty
+  log_path: ./ctbcap_rec/log/leo_kitty
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: luckcuple
+  platform: chaturbate
+  save_path: ./ctbcap_rec/luckcuple
+  log_path: ./ctbcap_rec/log/luckcuple
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Virgin_Aisha
+  platform: stripchat
+  save_path: ./ctbcap_rec/Virgin_Aisha
+  log_path: ./ctbcap_rec/log/Virgin_Aisha
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: your_molly_mark
+  platform: chaturbate
+  save_path: ./ctbcap_rec/your_molly_mark
+  log_path: ./ctbcap_rec/log/your_molly_mark
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Sikha_Abhi
+  platform: stripchat
+  save_path: ./ctbcap_rec/Sikha_Abhi
+  log_path: ./ctbcap_rec/log/Sikha_Abhi
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: sexynaina3
+  platform: stripchat
+  save_path: ./ctbcap_rec/sexynaina3
+  log_path: ./ctbcap_rec/log/sexynaina3
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Misty_09
+  platform: stripchat
+  save_path: ./ctbcap_rec/Misty_09
+  log_path: ./ctbcap_rec/log/Misty_09
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Simran_kaurr
+  platform: stripchat
+  save_path: ./ctbcap_rec/Simran_kaurr
+  log_path: ./ctbcap_rec/log/Simran_kaurr
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: your-zoya
+  platform: stripchat
+  save_path: ./ctbcap_rec/your-zoya
+  log_path: ./ctbcap_rec/log/your-zoya
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Hot-kavya
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hot-kavya
+  log_path: ./ctbcap_rec/log/Hot-kavya
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Desi-Rani_
+  platform: stripchat
+  save_path: ./ctbcap_rec/Desi-Rani_
+  log_path: ./ctbcap_rec/log/Desi-Rani_
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: indiangeni20
+  platform: stripchat
+  save_path: ./ctbcap_rec/indiangeni20
+  log_path: ./ctbcap_rec/log/indiangeni20
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: zaanbi
+  platform: stripchat
+  save_path: ./ctbcap_rec/zaanbi
+  log_path: ./ctbcap_rec/log/zaanbi
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Disha_22_
+  platform: stripchat
+  save_path: ./ctbcap_rec/Disha_22_
+  log_path: ./ctbcap_rec/log/Disha_22_
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: latina_nikita
+  platform: stripchat
+  save_path: ./ctbcap_rec/latina_nikita
+  log_path: ./ctbcap_rec/log/latina_nikita
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: young_couple76
+  platform: stripchat
+  save_path: ./ctbcap_rec/young_couple76
+  log_path: ./ctbcap_rec/log/young_couple76
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Aarti_misty71
+  platform: stripchat
+  save_path: ./ctbcap_rec/Aarti_misty71
+  log_path: ./ctbcap_rec/log/Aarti_misty71
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: babycharu
+  platform: stripchat
+  save_path: ./ctbcap_rec/babycharu
+  log_path: ./ctbcap_rec/log/babycharu
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Radhika__gori
+  platform: stripchat
+  save_path: ./ctbcap_rec/Radhika__gori
+  log_path: ./ctbcap_rec/log/Radhika__gori
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: hot-siyaa
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot-siyaa
+  log_path: ./ctbcap_rec/log/hot-siyaa
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: lovelyshaski
+  platform: stripchat
+  save_path: ./ctbcap_rec/lovelyshaski
+  log_path: ./ctbcap_rec/log/lovelyshaski
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Maggie_748
+  platform: stripchat
+  save_path: ./ctbcap_rec/Maggie_748
+  log_path: ./ctbcap_rec/log/Maggie_748
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: couple_swwet
+  platform: stripchat
+  save_path: ./ctbcap_rec/couple_swwet
+  log_path: ./ctbcap_rec/log/couple_swwet
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: lusty_alisha
+  platform: stripchat
+  save_path: ./ctbcap_rec/lusty_alisha
+  log_path: ./ctbcap_rec/log/lusty_alisha
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: princess_rinku
+  platform: stripchat
+  save_path: ./ctbcap_rec/princess_rinku
+  log_path: ./ctbcap_rec/log/princess_rinku
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: hot_PallaviX
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot_PallaviX
+  log_path: ./ctbcap_rec/log/hot_PallaviX
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: hot-couple-0
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot-couple-0
+  log_path: ./ctbcap_rec/log/hot-couple-0
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: KatyaCherryy
+  platform: stripchat
+  save_path: ./ctbcap_rec/KatyaCherryy
+  log_path: ./ctbcap_rec/log/KatyaCherryy
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: lololowka_
+  platform: stripchat
+  save_path: ./ctbcap_rec/lololowka_
+  log_path: ./ctbcap_rec/log/lololowka_
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: GlaydsLeveto
+  platform: stripchat
+  save_path: ./ctbcap_rec/GlaydsLeveto
+  log_path: ./ctbcap_rec/log/GlaydsLeveto
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: cherry_lotion
+  platform: stripchat
+  save_path: ./ctbcap_rec/cherry_lotion
+  log_path: ./ctbcap_rec/log/cherry_lotion
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Naira_fit
+  platform: stripchat
+  save_path: ./ctbcap_rec/Naira_fit
+  log_path: ./ctbcap_rec/log/Naira_fit
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: ViviRichard
+  platform: stripchat
+  save_path: ./ctbcap_rec/ViviRichard
+  log_path: ./ctbcap_rec/log/ViviRichard
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: EveryoneEverywhere
+  platform: stripchat
+  save_path: ./ctbcap_rec/EveryoneEverywhere
+  log_path: ./ctbcap_rec/log/EveryoneEverywhere
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: ElmiraDabato
+  platform: stripchat
+  save_path: ./ctbcap_rec/ElmiraDabato
+  log_path: ./ctbcap_rec/log/ElmiraDabato
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: EstelaSuppa
+  platform: stripchat
+  save_path: ./ctbcap_rec/EstelaSuppa
+  log_path: ./ctbcap_rec/log/EstelaSuppa
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: LavenderMitten
+  platform: stripchat
+  save_path: ./ctbcap_rec/LavenderMitten
+  log_path: ./ctbcap_rec/log/LavenderMitten
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: GlaydsLeveto
+  platform: stripchat
+  save_path: ./ctbcap_rec/GlaydsLeveto
+  log_path: ./ctbcap_rec/log/GlaydsLeveto
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: CarolannMirjah
+  platform: stripchat
+  save_path: ./ctbcap_rec/CarolannMirjah
+  log_path: ./ctbcap_rec/log/CarolannMirjah
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: SophieBelll
+  platform: stripchat
+  save_path: ./ctbcap_rec/SophieBelll
+  log_path: ./ctbcap_rec/log/SophieBelll
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: simmisweet
+  platform: stripchat
+  save_path: ./ctbcap_rec/simmisweet
+  log_path: ./ctbcap_rec/log/simmisweet
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: dallass_and_vegas
+  platform: chaturbate
+  save_path: ./ctbcap_rec/dallass_and_vegas
+  log_path: ./ctbcap_rec/log/dallass_and_vegas
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: minimollyq
+  platform: chaturbate
+  save_path: ./ctbcap_rec/minimollyq
+  log_path: ./ctbcap_rec/log/minimollyq
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: celinaimmel
+  platform: chaturbate
+  save_path: ./ctbcap_rec/celinaimmel
+  log_path: ./ctbcap_rec/log/celinaimmel
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: lunaysebastian-
+  platform: chaturbate
+  save_path: ./ctbcap_rec/lunaysebastian-
+  log_path: ./ctbcap_rec/log/lunaysebastian-
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: raveneusbiter
+  platform: chaturbate
+  save_path: ./ctbcap_rec/raveneusbiter
+  log_path: ./ctbcap_rec/log/raveneusbiter
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: cute_dipti
+  platform: stripchat
+  save_path: ./ctbcap_rec/cute_dipti
+  log_path: ./ctbcap_rec/log/cute_dipti
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: Shaniya03
+  platform: stripchat
+  save_path: ./ctbcap_rec/Shaniya03
+  log_path: ./ctbcap_rec/log/Shaniya03
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: luvishika
+  platform: stripchat
+  save_path: ./ctbcap_rec/luvishika
+  log_path: ./ctbcap_rec/log/luvishika
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: Hot_Deepansi02
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hot_Deepansi02
+  log_path: ./ctbcap_rec/log/Hot_Deepansi02
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: JasminKitany
+  platform: stripchat
+  save_path: ./ctbcap_rec/JasminKitany
+  log_path: ./ctbcap_rec/log/JasminKitany
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: foxy_bloomm
+  platform: stripchat
+  save_path: ./ctbcap_rec/foxy_bloomm
+  log_path: ./ctbcap_rec/log/foxy_bloomm
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: RochelTrewhitt
+  platform: stripchat
+  save_path: ./ctbcap_rec/RochelTrewhitt
+  log_path: ./ctbcap_rec/log/RochelTrewhitt
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: 4u4Love
+  platform: stripchat
+  save_path: ./ctbcap_rec/4u4Love
+  log_path: ./ctbcap_rec/log/4u4Love
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: thesensual_dollsss
+  platform: stripchat
+  save_path: ./ctbcap_rec/thesensual_dollsss
+  log_path: ./ctbcap_rec/log/thesensual_dollsss
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: JennyDilly
+  platform: stripchat
+  save_path: ./ctbcap_rec/JennyDilly
+  log_path: ./ctbcap_rec/log/JennyDilly
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: nancy_chancy
+  platform: stripchat
+  save_path: ./ctbcap_rec/nancy_chancy
+  log_path: ./ctbcap_rec/log/nancy_chancy
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: chelsea_bridget
+  platform: stripchat
+  save_path: ./ctbcap_rec/chelsea_bridget
+  log_path: ./ctbcap_rec/log/chelsea_bridget
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: GiovannaLopez
+  platform: stripchat
+  save_path: ./ctbcap_rec/GiovannaLopez
+  log_path: ./ctbcap_rec/log/GiovannaLopez
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: Rinkey-Love
+  platform: stripchat
+  save_path: ./ctbcap_rec/Rinkey-Love
+  log_path: ./ctbcap_rec/log/Rinkey-Love
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: thegirls_girls
+  platform: stripchat
+  save_path: ./ctbcap_rec/thegirls_girls
+  log_path: ./ctbcap_rec/log/thegirls_girls
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: Meilin_lin
+  platform: stripchat
+  save_path: ./ctbcap_rec/Meilin_lin
+  log_path: ./ctbcap_rec/log/Meilin_lin
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: Beedream
+  platform: stripchat
+  save_path: ./ctbcap_rec/Beedream
+  log_path: ./ctbcap_rec/log/Beedream
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: batmancatwoman17
+  platform: stripchat
+  save_path: ./ctbcap_rec/batmancatwoman17
+  log_path: ./ctbcap_rec/log/batmancatwoman17
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: AvanYa_1
+  platform: stripchat
+  save_path: ./ctbcap_rec/AvanYa_1
+  log_path: ./ctbcap_rec/log/AvanYa_1
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: isha_sax
+  platform: stripchat
+  save_path: ./ctbcap_rec/isha_sax
+  log_path: ./ctbcap_rec/log/isha_sax
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: misshermione2
+  platform: stripchat
+  save_path: ./ctbcap_rec/misshermione2
+  log_path: ./ctbcap_rec/log/misshermione2
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: its-ira
+  platform: stripchat
+  save_path: ./ctbcap_rec/its-ira
+  log_path: ./ctbcap_rec/log/its-ira
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: brandaburns
+  platform: stripchat
+  save_path: ./ctbcap_rec/brandaburns
+  log_path: ./ctbcap_rec/log/brandaburns
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: hii-tanisa
+  platform: stripchat
+  save_path: ./ctbcap_rec/hii-tanisa
+  log_path: ./ctbcap_rec/log/hii-tanisa
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: ivy_the_goddess
+  platform: stripchat
+  save_path: ./ctbcap_rec/ivy_the_goddess
+  log_path: ./ctbcap_rec/log/ivy_the_goddess
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: delhi_queen
+  platform: stripchat
+  save_path: ./ctbcap_rec/delhi_queen
+  log_path: ./ctbcap_rec/log/delhi_queen
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: cutenikkibaby
+  platform: stripchat
+  save_path: ./ctbcap_rec/cutenikkibaby
+  log_path: ./ctbcap_rec/log/cutenikkibaby
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: kiya_7
+  platform: stripchat
+  save_path: ./ctbcap_rec/kiya_7
+  log_path: ./ctbcap_rec/log/kiya_7
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: tihki_mirchi
+  platform: stripchat
+  save_path: ./ctbcap_rec/tihki_mirchi
+  log_path: ./ctbcap_rec/log/tihki_mirchi
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: pooja_riya
+  platform: stripchat
+  save_path: ./ctbcap_rec/pooja_riya
+  log_path: ./ctbcap_rec/log/pooja_riya
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: onlyxlicious_cb
+  platform: chaturbate
+  save_path: ./ctbcap_rec/onlyxlicious_cb
+  log_path: ./ctbcap_rec/log/onlyxlicious_cb
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Sexy-_eva
+  platform: stripchat
+  save_path: ./ctbcap_rec/Sexy-_eva
+  log_path: ./ctbcap_rec/log/Sexy-_eva
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: akrti_rao
+  platform: stripchat
+  save_path: ./ctbcap_rec/akrti_rao
+  log_path: ./ctbcap_rec/log/akrti_rao
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: sony_cutie
+  platform: stripchat
+  save_path: ./ctbcap_rec/sony_cutie
+  log_path: ./ctbcap_rec/log/sony_cutie
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: SEXY_SIYAA_
+  platform: stripchat
+  save_path: ./ctbcap_rec/SEXY_SIYAA_
+  log_path: ./ctbcap_rec/log/SEXY_SIYAA_
+  enabled: true
+  check_interval: 120
+  retry_interval: 60
+  cut_time: 0
+- name: eleanorka
+  platform: chaturbate
+  save_path: ./ctbcap_rec/eleanorka
+  log_path: ./ctbcap_rec/log/eleanorka
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: kailyginger
+  platform: chaturbate
+  save_path: ./ctbcap_rec/kailyginger
+  log_path: ./ctbcap_rec/log/kailyginger
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: michalkandoll
+  platform: chaturbate
+  save_path: ./ctbcap_rec/michalkandoll
+  log_path: ./ctbcap_rec/log/michalkandoll
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: DaissyZie
+  platform: stripchat
+  save_path: ./ctbcap_rec/DaissyZie
+  log_path: ./ctbcap_rec/log/DaissyZie
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: baby_jannat
+  platform: stripchat
+  save_path: ./ctbcap_rec/baby_jannat
+  log_path: ./ctbcap_rec/log/baby_jannat
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Yoga_Session
+  platform: stripchat
+  save_path: ./ctbcap_rec/Yoga_Session
+  log_path: ./ctbcap_rec/log/Yoga_Session
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Riya_rani7
+  platform: stripchat
+  save_path: ./ctbcap_rec/Riya_rani7
+  log_path: ./ctbcap_rec/log/Riya_rani7
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Dazy_lilly
+  platform: stripchat
+  save_path: ./ctbcap_rec/Dazy_lilly
+  log_path: ./ctbcap_rec/log/Dazy_lilly
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Shanaya_001
+  platform: stripchat
+  save_path: ./ctbcap_rec/Shanaya_001
+  log_path: ./ctbcap_rec/log/Shanaya_001
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Love_Sundari
+  platform: stripchat
+  save_path: ./ctbcap_rec/Love_Sundari
+  log_path: ./ctbcap_rec/log/Love_Sundari
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: princess_rink
+  platform: stripchat
+  save_path: ./ctbcap_rec/princess_rink
+  log_path: ./ctbcap_rec/log/princess_rink
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: indulgencex
+  platform: chaturbate
+  save_path: ./ctbcap_rec/indulgencex
+  log_path: ./ctbcap_rec/log/indulgencex
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: best_fucks
+  platform: chaturbate
+  save_path: ./ctbcap_rec/best_fucks
+  log_path: ./ctbcap_rec/log/best_fucks
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: kanchan7909
+  platform: stripchat
+  save_path: ./ctbcap_rec/kanchan7909
+  log_path: ./ctbcap_rec/log/kanchan7909
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: school_girl_tanisha
+  platform: stripchat
+  save_path: ./ctbcap_rec/school_girl_tanisha
+  log_path: ./ctbcap_rec/log/school_girl_tanisha
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Daisy_Shah_
+  platform: stripchat
+  save_path: ./ctbcap_rec/Daisy_Shah_
+  log_path: ./ctbcap_rec/log/Daisy_Shah_
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: deepa_33
+  platform: stripchat
+  save_path: ./ctbcap_rec/deepa_33
+  log_path: ./ctbcap_rec/log/deepa_33
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Xo_maya
+  platform: stripchat
+  save_path: ./ctbcap_rec/Xo_maya
+  log_path: ./ctbcap_rec/log/Xo_maya
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Jerin_Couple61
+  platform: stripchat
+  save_path: ./ctbcap_rec/Jerin_Couple61
+  log_path: ./ctbcap_rec/log/Jerin_Couple61
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: neha_singh0
+  platform: stripchat
+  save_path: ./ctbcap_rec/neha_singh0
+  log_path: ./ctbcap_rec/log/neha_singh0
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Shanaya_xo
+  platform: stripchat
+  save_path: ./ctbcap_rec/Shanaya_xo
+  log_path: ./ctbcap_rec/log/Shanaya_xo
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: hot-avni
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot-avni
+  log_path: ./ctbcap_rec/log/hot-avni
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Ranii2
+  platform: stripchat
+  save_path: ./ctbcap_rec/Ranii2
+  log_path: ./ctbcap_rec/log/Ranii2
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: baby_dall1
+  platform: stripchat
+  save_path: ./ctbcap_rec/baby_dall1
+  log_path: ./ctbcap_rec/log/baby_dall1
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: moodel_816
+  platform: stripchat
+  save_path: ./ctbcap_rec/moodel_816
+  log_path: ./ctbcap_rec/log/moodel_816
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: xloe_queen
+  platform: chaturbate
+  save_path: ./ctbcap_rec/xloe_queen
+  log_path: ./ctbcap_rec/log/xloe_queen
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: komal_sharma-
+  platform: stripchat
+  save_path: ./ctbcap_rec/komal_sharma
+  log_path: ./ctbcap_rec/log/komal_sharma
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: maddieandjason
+  platform: chaturbate
+  save_path: ./ctbcap_rec/maddieandjason
+  log_path: ./ctbcap_rec/log/maddieandjason
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: hania_zaidi
+  platform: stripchat
+  save_path: ./ctbcap_rec/hania_zaidi
+  log_path: ./ctbcap_rec/log/hania_zaidi
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: disha-vibes
+  platform: stripchat
+  save_path: ./ctbcap_rec/disha-vibes
+  log_path: ./ctbcap_rec/log/disha-vibes
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: nossy_97
+  platform: stripchat
+  save_path: ./ctbcap_rec/nossy_97
+  log_path: ./ctbcap_rec/log/nossy_97
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: haryanvi-monika
+  platform: stripchat
+  save_path: ./ctbcap_rec/haryanvi-monika
+  log_path: ./ctbcap_rec/log/haryanvi-monika
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: heer_ranjha_couple
+  platform: stripchat
+  save_path: ./ctbcap_rec/heer_ranjha_couple
+  log_path: ./ctbcap_rec/log/heer_ranjha_couple
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: mirikiteki
+  platform: stripchat
+  save_path: ./ctbcap_rec/mirikiteki
+  log_path: ./ctbcap_rec/log/mirikiteki
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: sexy_soft_heart19
+  platform: stripchat
+  save_path: ./ctbcap_rec/sexy_soft_heart19
+  log_path: ./ctbcap_rec/log/sexy_soft_heart19
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: babynyraa
+  platform: stripchat
+  save_path: ./ctbcap_rec/babynyraa
+  log_path: ./ctbcap_rec/log/babynyraa
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: marathi_dolly
+  platform: stripchat
+  save_path: ./ctbcap_rec/marathi_dolly
+  log_path: ./ctbcap_rec/log/marathi_dolly
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: LaynePingitore
+  platform: stripchat
+  save_path: ./ctbcap_rec/LaynePingitore
+  log_path: ./ctbcap_rec/log/LaynePingitore
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: HanneloreChemell
+  platform: stripchat
+  save_path: ./ctbcap_rec/HanneloreChemell
+  log_path: ./ctbcap_rec/log/HanneloreChemell
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Ailynice
+  platform: stripchat
+  save_path: ./ctbcap_rec/Ailynice
+  log_path: ./ctbcap_rec/log/Ailynice
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Fiza__khan
+  platform: stripchat
+  save_path: ./ctbcap_rec/Fiza__khan
+  log_path: ./ctbcap_rec/log/Fiza__khan
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: magdalenebirdtail
+  platform: chaturbate
+  save_path: ./ctbcap_rec/magdalenebirdtail
+  log_path: ./ctbcap_rec/log/magdalenebirdtail
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: mailin_harrington
+  platform: stripchat
+  save_path: ./ctbcap_rec/mailin_harrington
+  log_path: ./ctbcap_rec/log/mailin_harrington
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: sayana_shrma
+  platform: stripchat
+  save_path: ./ctbcap_rec/sayana_shrma
+  log_path: ./ctbcap_rec/log/sayana_shrma
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: rashmihotstudent
+  platform: stripchat
+  save_path: ./ctbcap_rec/rashmihotstudent
+  log_path: ./ctbcap_rec/log/rashmihotstudent
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: isha-19
+  platform: stripchat
+  save_path: ./ctbcap_rec/isha-19
+  log_path: ./ctbcap_rec/log/isha-19
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: suneeta077
+  platform: stripchat
+  save_path: ./ctbcap_rec/suneeta077
+  log_path: ./ctbcap_rec/log/suneeta077
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: its_anjali
+  platform: stripchat
+  save_path: ./ctbcap_rec/its_anjali
+  log_path: ./ctbcap_rec/log/its_anjali
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Yours-ira
+  platform: stripchat
+  save_path: ./ctbcap_rec/Yours-ira
+  log_path: ./ctbcap_rec/log/Yours-ira
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: hye__manvi_
+  platform: stripchat
+  save_path: ./ctbcap_rec/hye__manvi_
+  log_path: ./ctbcap_rec/log/hye__manvi_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: noty_gulnaaz
+  platform: stripchat
+  save_path: ./ctbcap_rec/noty_gulnaaz
+  log_path: ./ctbcap_rec/log/noty_gulnaaz
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Sexy_sanaya-
+  platform: stripchat
+  save_path: ./ctbcap_rec/Sexy_sanaya-
+  log_path: ./ctbcap_rec/log/Sexy_sanaya-
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Ani77880
+  platform: stripchat
+  save_path: ./ctbcap_rec/Ani77880-
+  log_path: ./ctbcap_rec/log/Ani77880-
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Nandundi
+  platform: stripchat
+  save_path: ./ctbcap_rec/Nandundi
+  log_path: ./ctbcap_rec/log/Nandundi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Ceromi_0
+  platform: stripchat
+  save_path: ./ctbcap_rec/Ceromi_0
+  log_path: ./ctbcap_rec/log/Ceromi_0
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: missruhihot
+  platform: stripchat
+  save_path: ./ctbcap_rec/missruhihot
+  log_path: ./ctbcap_rec/log/missruhihot
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Missdelhii
+  platform: stripchat
+  save_path: ./ctbcap_rec/Missdelhii
+  log_path: ./ctbcap_rec/log/Missdelhii
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Amira-school
+  platform: stripchat
+  save_path: ./ctbcap_rec/Amira-school
+  log_path: ./ctbcap_rec/log/Amira-school
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: mysat
+  platform: chaturbate
+  save_path: ./ctbcap_rec/mysat
+  log_path: ./ctbcap_rec/log/mysat
+  enabled: true
+  check_interval: 300
+  retry_interval: 180
+  cut_time: 0
+- name: Moody_1999
+  platform: stripchat
+  save_path: ./ctbcap_rec/Moody_1999
+  log_path: ./ctbcap_rec/log/Moody_1999
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: lakshmimodel
+  platform: stripchat
+  save_path: ./ctbcap_rec/lakshmimodel
+  log_path: ./ctbcap_rec/log/lakshmimodel
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: alisha_queen55
+  platform: stripchat
+  save_path: ./ctbcap_rec/alisha_queen55
+  log_path: ./ctbcap_rec/log/alisha_queen55
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Sonam_sexy01
+  platform: stripchat
+  save_path: ./ctbcap_rec/Sonam_sexy01
+  log_path: ./ctbcap_rec/log/Sonam_sexy01
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: bitchhin__00
+  platform: stripchat
+  save_path: ./ctbcap_rec/bitchhin__00
+  log_path: ./ctbcap_rec/log/bitchhin__00
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Ru_hi
+  platform: stripchat
+  save_path: ./ctbcap_rec/Ru_hi
+  log_path: ./ctbcap_rec/log/Ru_hi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: mahi_thakur0
+  platform: stripchat
+  save_path: ./ctbcap_rec/mahi_thakur0
+  log_path: ./ctbcap_rec/log/mahi_thakur0
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: sexy-pari1
+  platform: stripchat
+  save_path: ./ctbcap_rec/sexy-pari1
+  log_path: ./ctbcap_rec/log/sexy-pari1
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Ridhima_Shrma
+  platform: stripchat
+  save_path: ./ctbcap_rec/Ridhima_Shrma
+  log_path: ./ctbcap_rec/log/Ridhima_Shrma
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: ru_hi
+  platform: stripchat
+  save_path: ./ctbcap_rec/ru_hi
+  log_path: ./ctbcap_rec/log/ru_hi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Bold-Maya
+  platform: stripchat
+  save_path: ./ctbcap_rec/Bold-Maya
+  log_path: ./ctbcap_rec/log/Bold-Maya
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Dominate_Daddy
+  platform: stripchat
+  save_path: ./ctbcap_rec/Dominate_Daddy
+  log_path: ./ctbcap_rec/log/Dominate_Daddy
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: hotnikita
+  platform: stripchat
+  save_path: ./ctbcap_rec/hotnikita
+  log_path: ./ctbcap_rec/log/hotnikita
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Noughty_girl00
+  platform: stripchat
+  save_path: ./ctbcap_rec/Noughty_girl00
+  log_path: ./ctbcap_rec/log/Noughty_girl00
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: its_Pinky
+  platform: stripchat
+  save_path: ./ctbcap_rec/its_Pinky
+  log_path: ./ctbcap_rec/log/its_Pinky
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Roshelle_luxe
+  platform: stripchat
+  save_path: ./ctbcap_rec/Roshelle_luxe
+  log_path: ./ctbcap_rec/log/Roshelle_luxe
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: missbeatriss
+  platform: stripchat
+  save_path: ./ctbcap_rec/missbeatriss
+  log_path: ./ctbcap_rec/log/missbeatriss
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: classmate07
+  platform: stripchat
+  save_path: ./ctbcap_rec/classmate07
+  log_path: ./ctbcap_rec/log/classmate07
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: hot_janvi_
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot_janvi_
+  log_path: ./ctbcap_rec/log/hot_janvi_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: lustyy_girlss
+  platform: stripchat
+  save_path: ./ctbcap_rec/lustyy_girlss
+  log_path: ./ctbcap_rec/log/lustyy_girlss
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: DainaFucci
+  platform: stripchat
+  save_path: ./ctbcap_rec/DainaFucci
+  log_path: ./ctbcap_rec/log/DainaFucci
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Siya_9877
+  platform: stripchat
+  save_path: ./ctbcap_rec/Siya_9877
+  log_path: ./ctbcap_rec/log/Siya_9877
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: GirlMathExpert
+  platform: stripchat
+  save_path: ./ctbcap_rec/GirlMathExpert
+  log_path: ./ctbcap_rec/log/GirlMathExpert
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: dasydoll
+  platform: stripchat
+  save_path: ./ctbcap_rec/dasydoll
+  log_path: ./ctbcap_rec/log/dasydoll
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Sexy_sanaya
+  platform: stripchat
+  save_path: ./ctbcap_rec/Sexy_sanaya
+  log_path: ./ctbcap_rec/log/Sexy_sanaya
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: enjoy_Couple10
+  platform: stripchat
+  save_path: ./ctbcap_rec/enjoy_Couple10
+  log_path: ./ctbcap_rec/log/enjoy_Couple10
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Hey-anamika
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hey-anamika
+  log_path: ./ctbcap_rec/log/Hey-anamika
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: hornygirl_2026
+  platform: stripchat
+  save_path: ./ctbcap_rec/hornygirl_2026
+  log_path: ./ctbcap_rec/log/hornygirl_2026
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Rubina_69
+  platform: stripchat
+  save_path: ./ctbcap_rec/Rubina_69
+  log_path: ./ctbcap_rec/log/Rubina_69
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: velvetvibe_75
+  platform: stripchat
+  save_path: ./ctbcap_rec/velvetvibe_75
+  log_path: ./ctbcap_rec/log/velvetvibe_75
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Saltyxcouple05
+  platform: stripchat
+  save_path: ./ctbcap_rec/Saltyxcouple05
+  log_path: ./ctbcap_rec/log/Saltyxcouple05
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: kavya-ranii
+  platform: stripchat
+  save_path: ./ctbcap_rec/kavya-ranii
+  log_path: ./ctbcap_rec/log/kavya-ranii
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Sexykhushi041
+  platform: stripchat
+  save_path: ./ctbcap_rec/Sexykhushi041
+  log_path: ./ctbcap_rec/log/Sexykhushi041
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Cutegirl-rubi
+  platform: stripchat
+  save_path: ./ctbcap_rec/Cutegirl-rubi
+  log_path: ./ctbcap_rec/log/Cutegirl-rubi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: BestSweetyBB
+  platform: stripchat
+  save_path: ./ctbcap_rec/BestSweetyBB
+  log_path: ./ctbcap_rec/log/BestSweetyBB
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: onlyxlicious_sc
+  platform: stripchat
+  save_path: ./ctbcap_rec/onlyxlicious_sc
+  log_path: ./ctbcap_rec/log/onlyxlicious_sc
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: sofixlexxx
+  platform: chaturbate
+  save_path: ./ctbcap_rec/sofixlexxx
+  log_path: ./ctbcap_rec/log/sofixlexxx
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: luckcuple
+  platform: chaturbate
+  save_path: ./ctbcap_rec/luckcuple
+  log_path: ./ctbcap_rec/log/luckcuple
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: xoxoduo_
+  platform: chaturbate
+  save_path: ./ctbcap_rec/xoxoduo_
+  log_path: ./ctbcap_rec/log/xoxoduo_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: ToFabForYou
+  platform: stripchat
+  save_path: ./ctbcap_rec/ToFabForYou
+  log_path: ./ctbcap_rec/log/ToFabForYou
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: rupali321g
+  platform: stripchat
+  save_path: ./ctbcap_rec/rupali321g
+  log_path: ./ctbcap_rec/log/rupali321g
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: BestSweetyBB
+  platform: stripchat
+  save_path: ./ctbcap_rec/BestSweetyBB
+  log_path: ./ctbcap_rec/log/BestSweetyBB
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: luvmp4
+  platform: stripchat
+  save_path: ./ctbcap_rec/luvmp4
+  log_path: ./ctbcap_rec/log/luvmp4
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: Neha18
+  platform: stripchat
+  save_path: ./ctbcap_rec/Neha18
+  log_path: ./ctbcap_rec/log/Neha18
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: spicy_neha
+  platform: stripchat
+  save_path: ./ctbcap_rec/spicy_neha
+  log_path: ./ctbcap_rec/log/spicy_neha
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Nana_Wilson
+  platform: stripchat
+  save_path: ./ctbcap_rec/Nana_Wilson
+  log_path: ./ctbcap_rec/log/Nana_Wilson
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: MoonBabyCouple
+  platform: stripchat
+  save_path: ./ctbcap_rec/MoonBabyCouple
+  log_path: ./ctbcap_rec/log/MoonBabyCouple
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: sxuu
+  platform: stripchat
+  save_path: ./ctbcap_rec/sxuu
+  log_path: ./ctbcap_rec/log/sxuu
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: gamebelka
+  platform: chaturbate
+  save_path: ./ctbcap_rec/gamebelka
+  log_path: ./ctbcap_rec/log/gamebelka
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: hot_silkk 
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot_silkk
+  log_path: ./ctbcap_rec/log/hot_silkk
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Somya_xxx
+  platform: stripchat
+  save_path: ./ctbcap_rec/Somya_xxx
+  log_path: ./ctbcap_rec/log/Somya_xxx
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Sweet-priyaa 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Sweet-priyaa
+  log_path: ./ctbcap_rec/log/Sweet-priyaa
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Hornyshow_tv
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hornyshow_tv
+  log_path: ./ctbcap_rec/log/Hornyshow_tv
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Lissa__tarzannnnn
+  platform: stripchat
+  save_path: ./ctbcap_rec/Lissa__tarzannnnn
+  log_path: ./ctbcap_rec/log/Lissa__tarzannnnn
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+
+- name: indulgencex
+  platform: chaturbate
+  save_path: ./ctbcap_rec/indulgencex
+  log_path: ./ctbcap_rec/log/indulgencex
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+
+- name: katyskinny
+  platform: stripchat
+  save_path: ./ctbcap_rec/katyskinny
+  log_path: ./ctbcap_rec/log/katyskinny
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Belle_Blondy
+  platform: stripchat
+  save_path: ./ctbcap_rec/Belle_Blondy
+  log_path: ./ctbcap_rec/log/Belle_Blondy
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: VidaInklebarger
+  platform: stripchat
+  save_path: ./ctbcap_rec/VidaInklebarger
+  log_path: ./ctbcap_rec/log/VidaInklebarger
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: syuri_sun
+  platform: stripchat
+  save_path: ./ctbcap_rec/syuri_sun
+  log_path: ./ctbcap_rec/log/syuri_sun
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: syuri_sun
+  platform: chaturbate
+  save_path: ./ctbcap_rec/syuri_sun
+  log_path: ./ctbcap_rec/log/syuri_sun
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: juliyajam
+  platform: chaturbate
+  save_path: ./ctbcap_rec/juliyajam
+  log_path: ./ctbcap_rec/log/juliyajam
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: SepiahLune
+  platform: stripchat
+  save_path: ./ctbcap_rec/SepiahLune
+  log_path: ./ctbcap_rec/log/SepiahLune
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: SallieLenorud
+  platform: stripchat
+  save_path: ./ctbcap_rec/SallieLenorud
+  log_path: ./ctbcap_rec/log/SallieLenorud
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: cloesweetdreams
+  platform: stripchat
+  save_path: ./ctbcap_rec/cloesweetdreams
+  log_path: ./ctbcap_rec/log/cloesweetdreams
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: EstaGerloff
+  platform: stripchat
+  save_path: ./ctbcap_rec/EstaGerloff
+  log_path: ./ctbcap_rec/log/EstaGerloff
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: SunnySikarskie
+  platform: stripchat
+  save_path: ./ctbcap_rec/SunnySikarskie
+  log_path: ./ctbcap_rec/log/SunnySikarskie
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+
+- name: Rose_Nora
+  platform: stripchat
+  save_path: ./ctbcap_rec/Rose_Nora
+  log_path: ./ctbcap_rec/log/Rose_Nora
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Lusty_simran
+  platform: stripchat
+  save_path: ./ctbcap_rec/Lusty_simran
+  log_path: ./ctbcap_rec/log/Lusty_simran
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: sexcumworld
+  platform: stripchat
+  save_path: ./ctbcap_rec/sexcumworld
+  log_path: ./ctbcap_rec/log/sexcumworld
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: TimotheeChalawet
+  platform: stripchat
+  save_path: ./ctbcap_rec/TimotheeChalawet
+  log_path: ./ctbcap_rec/log/TimotheeChalawet
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Wild_Mahira
+  platform: stripchat
+  save_path: ./ctbcap_rec/Wild_Mahira
+  log_path: ./ctbcap_rec/log/Wild_Mahira
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Hot-Haney33
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hot-Haney33
+  log_path: ./ctbcap_rec/log/Hot-Haney33
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: babyanamika1
+  platform: stripchat
+  save_path: ./ctbcap_rec/babyanamika1
+  log_path: ./ctbcap_rec/log/babyanamika1
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Loverhot12
+  platform: stripchat
+  save_path: ./ctbcap_rec/Loverhot12
+  log_path: ./ctbcap_rec/log/Loverhot12
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Hey-anamika
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hey-anamika
+  log_path: ./ctbcap_rec/log/Hey-anamika
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+- name: hot_ashleel_couple18
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot_ashleel_couple18
+  log_path: ./ctbcap_rec/log/hot_ashleel_couple18
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Shanaya_xo  
+  platform: stripchat
+  save_path: ./ctbcap_rec/Shanaya_xo
+  log_path: ./ctbcap_rec/log/Shanaya_xo
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Preeti_sharma_01
+  platform: stripchat
+  save_path: ./ctbcap_rec/Preeti_sharma_01
+  log_path: ./ctbcap_rec/log/Preeti_sharma_01
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Prihu143  
+  platform: stripchat
+  save_path: ./ctbcap_rec/Prihu143
+  log_path: ./ctbcap_rec/log/Prihu143
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: your_dreams__
+  platform: stripchat
+  save_path: ./ctbcap_rec/your_dreams__
+  log_path: ./ctbcap_rec/log/your_dreams__
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Naughty_Meena
+  platform: stripchat
+  save_path: ./ctbcap_rec/Naughty_Meena
+  log_path: ./ctbcap_rec/log/Naughty_Meena
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Hye__manvi_
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hye__manvi_
+  log_path: ./ctbcap_rec/log/Hye__manvi_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+
+- name: sexcumworld
+  platform: chaturbate
+  save_path: ./ctbcap_rec/sexcumworld
+  log_path: ./ctbcap_rec/log/sexcumworld
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: HOTDARLING420
+  platform: stripchat
+  save_path: ./ctbcap_rec/HOTDARLING420
+  log_path: ./ctbcap_rec/log/HOTDARLING420
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: onibaddiee
+  platform: stripchat
+  save_path: ./ctbcap_rec/onibaddiee
+  log_path: ./ctbcap_rec/log/onibaddiee
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: lovelydepika
+  platform: stripchat
+  save_path: ./ctbcap_rec/lovelydepika
+  log_path: ./ctbcap_rec/log/lovelydepika
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  
+- name: oo_yes_bhabhi 
+  platform: stripchat
+  save_path: ./ctbcap_rec/oo_yes_bhabhi
+  log_path: ./ctbcap_rec/log/oo_yes_bhabhi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: its_saanvi
+  platform: stripchat
+  save_path: ./ctbcap_rec/its_saanvi
+  log_path: ./ctbcap_rec/log/its_saanvi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: shy_jhanvi_
+  platform: stripchat
+  save_path: ./ctbcap_rec/shy_jhanvi_
+  log_path: ./ctbcap_rec/log/shy_jhanvi_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Itz_Archii
+  platform: stripchat
+  save_path: ./ctbcap_rec/Itz_Archii
+  log_path: ./ctbcap_rec/log/Itz_Archii
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: cherrypie_02
+  platform: stripchat
+  save_path: ./ctbcap_rec/cherrypie_02
+  log_path: ./ctbcap_rec/log/cherrypie_02
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Jonika90
+  platform: stripchat
+  save_path: ./ctbcap_rec/Jonika90
+  log_path: ./ctbcap_rec/log/Jonika90
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: -Micky-   
+  platform: stripchat
+  save_path: ./ctbcap_rec/-Micky-
+  log_path: ./ctbcap_rec/log/-Micky-
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: ToFabForYou 
+  platform: stripchat
+  save_path: ./ctbcap_rec/ToFabForYou
+  log_path: ./ctbcap_rec/log/ToFabForYou
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Romantic-couple10 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Romantic-couple10 
+  log_path: ./ctbcap_rec/log/Romantic-couple10 
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: amaemoon_ 
+  platform: stripchat
+  save_path: ./ctbcap_rec/amaemoon_
+  log_path: ./ctbcap_rec/log/amaemoon_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Miss__Jacqueline  
+  platform: stripchat
+  save_path: ./ctbcap_rec/Miss__Jacqueline
+  log_path: ./ctbcap_rec/log/Miss__Jacqueline
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Miss__Malaika 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Miss__Malaika
+  log_path: ./ctbcap_rec/log/Miss__Malaika
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: hot_ashleel_couple18
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot_ashleel_couple18
+  log_path: ./ctbcap_rec/log/hot_ashleel_couple18
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Miss_kamiya_Jaan 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Miss_kamiya_Jaan 
+  log_path: ./ctbcap_rec/log/Miss_kamiya_Jaan 
+  enabled: true
+  check_interval: 60
+  retry_interval: 60 
+
+- name: Angel_Palak_  
+  platform: stripchat
+  save_path: ./ctbcap_rec/Angel_Palak_
+  log_path: ./ctbcap_rec/log/Angel_Palak_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60 
+
+- name: Missdelhii
+  platform: stripchat
+  save_path: ./ctbcap_rec/Missdelhii
+  log_path: ./ctbcap_rec/log/Missdelhii
+  enabled: true
+  check_interval: 60
+  retry_interval: 60 
+
+- name: veloriaX
+  platform: stripchat
+  save_path: ./ctbcap_rec/veloriaX
+  log_path: ./ctbcap_rec/log/veloriaX
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: short_girl_
+  platform: stripchat
+  save_path: ./ctbcap_rec/short_girl_
+  log_path: ./ctbcap_rec/log/short_girl_
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+   
+- name: CaryWestberg  
+  platform: stripchat
+  save_path: ./ctbcap_rec/CaryWestberg
+  log_path: ./ctbcap_rec/log/CaryWestberg
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: JustZaraaa
+  platform: stripchat
+  save_path: ./ctbcap_rec/JustZaraaa
+  log_path: ./ctbcap_rec/log/JustZaraaa
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  
+- name: Hannahbrown 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hannahbrown
+  log_path: ./ctbcap_rec/log/Hannahbrown
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: paniemmi 
+  platform: stripchat
+  save_path: ./ctbcap_rec/paniemmi
+  log_path: ./ctbcap_rec/log/paniemmi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Kinzas_cpl  
+  platform: stripchat
+  save_path: ./ctbcap_rec/Kinzas_cpl  
+  log_path: ./ctbcap_rec/log/Kinzas_cpl  
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+
+- name: Hot-baby-Alexa
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hot-baby-Alexa
+  log_path: ./ctbcap_rec/log/Hot-baby-Alexa
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0 
+
+- name: Horny_Sanjana
+  platform: stripchat
+  save_path: ./ctbcap_rec/Horny_Sanjana
+  log_path: ./ctbcap_rec/log/Horny_Sanjana
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+  
+- name: rimavvi
+  platform: chaturbate
+  save_path: ./ctbcap_rec/rimavvi
+  log_path: ./ctbcap_rec/log/rimavvi
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: bright_bby
+  platform: chaturbate
+  save_path: ./ctbcap_rec/bright_bby
+  log_path: ./ctbcap_rec/log/bright_bby
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+  
+
+- name: alicestacy
+  platform: chaturbate
+  save_path: ./ctbcap_rec/alicestacy
+  log_path: ./ctbcap_rec/log/alicestacy
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: luckcuple
+  platform: chaturbate
+  save_path: ./ctbcap_rec/luckcuple
+  log_path: ./ctbcap_rec/log/luckcuple
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
