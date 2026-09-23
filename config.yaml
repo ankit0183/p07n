@@ -805,14 +805,6 @@ models:
 #   retry_interval: 60
 #   cut_time: 0
 
-# - name: LovelyPriya
-#   platform: stripchat
-#   save_path: ./ctbcap_rec/LovelyPriya
-#   log_path: ./ctbcap_rec/log/LovelyPriya
-#   enabled: true
-#   check_interval: 60
-#   retry_interval: 60
-#   cut_time: 0
 
 # - name: Pooja-G 
 #   platform: stripchat
@@ -860,14 +852,6 @@ models:
 #   retry_interval: 60
 #   cut_time: 0
 
-# - name: hi_trisha
-#   platform: stripchat
-#   save_path: ./ctbcap_rec/hi_trisha
-#   log_path: ./ctbcap_rec/log/hi_trisha
-#   enabled: true
-#   check_interval: 60
-#   retry_interval: 60
-#   cut_time: 0
 
 # - name: Kiritika_1 
 #   platform: stripchat
@@ -1182,21 +1166,6 @@ models:
   check_interval: 10
   retry_interval: 10
 
-- name: sia_baby
-  platform: stripchat
-  save_path: ./ctbcap_rec/sia_baby
-  log_path: ./ctbcap_rec/log/sia_baby
-  enabled: true
-  check_interval: 10
-  retry_interval: 10
-
-- name: Mahi677
-  platform: stripchat
-  save_path: ./ctbcap_rec/Mahi677
-  log_path: ./ctbcap_rec/log/Mahi677
-  enabled: true
-  check_interval: 10
-  retry_interval: 10
 
 # - name: lubovtelom
 #   platform: chaturbate
@@ -1256,14 +1225,6 @@ models:
   retry_interval: 10
   cut_time: 0
 
-- name: Hie-Lily 
-  platform: stripchat
-  save_path: ./ctbcap_rec/Hie-Lily 
-  log_path: ./ctbcap_rec/log/Hie-Lily 
-  enabled: true
-  check_interval: 10
-  retry_interval: 10
-  cut_time: 0
 
 - name: Indian_Couple_Live
   platform: stripchat
@@ -1312,13 +1273,118 @@ models:
   save_path: ./ctbcap_rec/Nidhi747 
   log_path: ./ctbcap_rec/log/Nidhi747 
   enabled: true
-  check_interval: 60
-  retry_interval: 60
+  check_interval: 10
+  retry_interval: 10
 
 - name: spicy_neha
   platform: stripchat
   save_path: ./ctbcap_rec/spicy_neha
   log_path: ./ctbcap_rec/log/spicy_neha
   enabled: true
-  check_interval: 60
-  retry_interval: 60
+  check_interval: 10
+  retry_interval: 10
+
+- name: LovelyPriya 
+  platform: stripchat
+  save_path: ./ctbcap_rec/LovelyPriya 
+  log_path: ./ctbcap_rec/log/LovelyPriya 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: elisadikotti
+  platform: stripchat
+  save_path: ./ctbcap_rec/elisadikotti
+  log_path: ./ctbcap_rec/log/elisadikotti
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+
+- name: SANDHYAHOTKUMARI 
+  platform: stripchat
+  save_path: ./ctbcap_rec/SANDHYAHOTKUMARI 
+  log_path: ./ctbcap_rec/log/SANDHYAHOTKUMARI 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: hi_trisha
+  platform: stripchat
+  save_path: ./ctbcap_rec/hi_trisha
+  log_path: ./ctbcap_rec/log/hi_trisha
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Monika_my_Darling@xh
+  platform: stripchat
+  save_path: ./ctbcap_rec/Monika_my_Darling@xh
+  log_path: ./ctbcap_rec/log/Monika_my_Darling@xh
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Kavya-Ranii
+  platform: stripchat
+  save_path: ./ctbcap_rec/Kavya-Ranii
+  log_path: ./ctbcap_rec/log/Kavya-Ranii
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Priyanka011 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Priyanka011 
+  log_path: ./ctbcap_rec/log/Priyanka011 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: jaan_jiya
+  platform: stripchat
+  save_path: ./ctbcap_rec/jaan_jiya
+  log_path: ./ctbcap_rec/log/jaan_jiya
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: KratosAfroditacs
+  platform: stripchat
+  save_path: ./ctbcap_rec/KratosAfroditacs
+  log_path: ./ctbcap_rec/log/KratosAfroditacs
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Ex_ppriya 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Ex_ppriya 
+  log_path: ./ctbcap_rec/log/Ex_ppriya 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: MelissaZaria  
+  platform: stripchat
+  save_path: ./ctbcap_rec/MelissaZaria  
+  log_path: ./ctbcap_rec/log/MelissaZaria  
+  enabled: true
+  check_interval: 10
+  retry_interval: 10 
+
+- name: hottyneelu
+  platform: stripchat
+  save_path: ./ctbcap_rec/hottyneelu
+  log_path: ./ctbcap_rec/log/hottyneelu
+  enabled: true
+  check_interval: 10
+  retry_interval: 10 
+
+- name: notyg240 
+  platform: stripchat
+  save_path: ./ctbcap_rec/notyg240 
+  log_path: ./ctbcap_rec/log/notyg240 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
