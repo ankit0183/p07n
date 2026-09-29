@@ -453,3 +453,27 @@ models:
   enabled: true
   check_interval: 10
   retry_interval: 10
+
+- name: husband_wife_12 
+  platform: stripchat
+  save_path: ./ctbcap_rec/husband_wife_12 
+  log_path: ./ctbcap_rec/log/husband_wife_12 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: kiaraqueen7
+  platform: stripchat
+  save_path: ./ctbcap_rec/kiaraqueen7
+  log_path: ./ctbcap_rec/log/kiaraqueen7
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: young_couple76
+  platform: stripchat
+  save_path: ./ctbcap_rec/young_couple76
+  log_path: ./ctbcap_rec/log/young_couple76
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
