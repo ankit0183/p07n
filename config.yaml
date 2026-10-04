@@ -104,13 +104,6 @@ models:
   check_interval: 60
   retry_interval: 60
 
-- name : ZaidaSchwarten 
-  platform: stripchat
-  save_path: ./ctbcap_rec/ZaidaSchwarten
-  log_path: ./ctbcap_rec/log/ZaidaSchwarten
-  enabled: true
-  check_interval: 60
-  retry_interval: 60
 
 - name: LinaRivse
   platform: stripchat
@@ -341,13 +334,6 @@ models:
   check_interval: 10
   retry_interval: 10
 
-- name: Monika_my_Darling@xh
-  platform: stripchat
-  save_path: ./ctbcap_rec/Monika_my_Darling@xh
-  log_path: ./ctbcap_rec/log/Monika_my_Darling@xh
-  enabled: true
-  check_interval: 10
-  retry_interval: 10
 
 - name: Kavya-Ranii
   platform: stripchat
