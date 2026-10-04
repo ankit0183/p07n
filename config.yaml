@@ -408,14 +408,6 @@ models:
   retry_interval: 10
 
 
-- name: Sujatha__sujji_ 
-  platform: stripchat
-  save_path: ./ctbcap_rec/Sujatha__sujji_ 
-  log_path: ./ctbcap_rec/log/Sujatha__sujji_ 
-  enabled: true
-  check_interval: 10
-  retry_interval: 10
-
 - name: Tina_verma01 
   platform: stripchat
   save_path: ./ctbcap_rec/Tina_verma01 
