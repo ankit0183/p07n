@@ -455,3 +455,100 @@ models:
   enabled: true
   check_interval: 10
   retry_interval: 10
+
+
+- name: Rani_sen787 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Rani_sen787 
+  log_path: ./ctbcap_rec/log/Rani_sen787 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Cute_girl7898
+  platform: stripchat
+  save_path: ./ctbcap_rec/Cute_girl7898
+  log_path: ./ctbcap_rec/log/Cute_girl7898
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: nyala2007
+  platform: stripchat
+  save_path: ./ctbcap_rec/nyala2007
+  log_path: ./ctbcap_rec/log/nyala2007
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Rubina_69
+  platform: stripchat
+  save_path: ./ctbcap_rec/Rubina_69
+  log_path: ./ctbcap_rec/log/Rubina_69
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: slimyass1000 
+  platform: stripchat
+  save_path: ./ctbcap_rec/slimyass1000 
+  log_path: ./ctbcap_rec/log/slimyass1000 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Miss0515
+  platform: stripchat
+  save_path: ./ctbcap_rec/Miss0515
+  log_path: ./ctbcap_rec/log/Miss0515
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: silverworm2026 
+  platform: stripchat
+  save_path: ./ctbcap_rec/silverworm2026 
+  log_path: ./ctbcap_rec/log/silverworm2026 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: kavita_45
+  platform: stripchat
+  save_path: ./ctbcap_rec/kavita_45
+  log_path: ./ctbcap_rec/log/kavita_45
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: ______________I__________ 
+  platform: stripchat
+  save_path: ./ctbcap_rec/_______________I__________ 
+  log_path: ./ctbcap_rec/log/_______________I__________ 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: sumita-bhabi 
+  platform: stripchat
+  save_path: ./ctbcap_rec/sumita-bhabi 
+  log_path: ./ctbcap_rec/log/sumita-bhabi 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: suman_44 
+  platform: stripchat
+  save_path: ./ctbcap_rec/suman_44 
+  log_path: ./ctbcap_rec/log/suman_44 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Tiffanythegreatest
+  platform: stripchat
+  save_path: ./ctbcap_rec/Tiffanythegreatest
+  log_path: ./ctbcap_rec/log/Tiffanythegreatest
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
