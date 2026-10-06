@@ -552,3 +552,66 @@ models:
   enabled: true
   check_interval: 10
   retry_interval: 10
+- name : PRINCESS829 
+  platform: stripchat
+  save_path: ./ctbcap_rec/PRINCESS829 
+  log_path: ./ctbcap_rec/log/PRINCESS829 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10  
+
+- name: DESHICPL69 
+  platform: stripchat
+  save_path: ./ctbcap_rec/DESHICPL69 
+  log_path: ./ctbcap_rec/log/DESHICPL69 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10  
+
+- name: bluegirlandboy
+  platform: stripchat
+  save_path: ./ctbcap_rec/bluegirlandboy
+  log_path: ./ctbcap_rec/log/bluegirlandboy
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Silencesex21
+  platform: stripchat
+  save_path: ./ctbcap_rec/Silencesex21
+  log_path: ./ctbcap_rec/log/Silencesex21
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: sofiaa_R 
+  platform: stripchat
+  save_path: ./ctbcap_rec/sofiaa_R 
+  log_path: ./ctbcap_rec/log/sofiaa_R 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: SonRudnick
+  platform: stripchat
+  save_path: ./ctbcap_rec/SonRudnick
+  log_path: ./ctbcap_rec/log/SonRudnick
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name:  abbyandniko
+  platform: stripchat
+  save_path: ./ctbcap_rec/abbyandniko
+  log_path: ./ctbcap_rec/log/abbyandniko
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: HellenGruner
+  platform: stripchat
+  save_path: ./ctbcap_rec/HellenGruner
+  log_path: ./ctbcap_rec/log/HellenGruner
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
