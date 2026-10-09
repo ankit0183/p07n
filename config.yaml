@@ -615,3 +615,209 @@ models:
   enabled: true
   check_interval: 10
   retry_interval: 10
+
+
+- name: sweatqueen
+  platform: stripchat
+  save_path: ./ctbcap_rec/sweatqueen
+  log_path: ./ctbcap_rec/log/sweatqueen
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: zulmi_zoya 
+  platform: stripchat
+  save_path: ./ctbcap_rec/zulmi_zoya 
+  log_path: ./ctbcap_rec/log/zulmi_zoya 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+
+- name: Yoga_Session 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Yoga_Session 
+  log_path: ./ctbcap_rec/log/Yoga_Session 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10 
+
+- name: SEXY_JANVI0
+  platform: stripchat
+  save_path: ./ctbcap_rec/SEXY_JANVI0
+  log_path: ./ctbcap_rec/log/SEXY_JANVI0
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: DiamondAnna 
+  platform: stripchat
+  save_path: ./ctbcap_rec/DiamondAnna 
+  log_path: ./ctbcap_rec/log/DiamondAnna 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: MissHermione2 
+  platform: stripchat
+  save_path: ./ctbcap_rec/MissHermione2 
+  log_path: ./ctbcap_rec/log/MissHermione2 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: DESI_Love 
+  platform: stripchat
+  save_path: ./ctbcap_rec/DESI_Love 
+  log_path: ./ctbcap_rec/log/DESI_Love 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Itam_lusy 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Itam_lusy 
+  log_path: ./ctbcap_rec/log/Itam_lusy 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: crezyfuck63 
+  platform: stripchat
+  save_path: ./ctbcap_rec/crezyfuck63 
+  log_path: ./ctbcap_rec/log/crezyfuck63 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Sexy_sassyy 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Sexy_sassyy 
+  log_path: ./ctbcap_rec/log/Sexy_sassyy 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Crazycpl__1 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Crazycpl__1 
+  log_path: ./ctbcap_rec/log/Crazycpl__1 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Silencesex21   
+  platform: stripchat
+  save_path: ./ctbcap_rec/Silencesex21   
+  log_path: ./ctbcap_rec/log/Silencesex21   
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: New_aisha
+  platform: stripchat
+  save_path: ./ctbcap_rec/New_aisha
+  log_path: ./ctbcap_rec/log/New_aisha
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Lissa_tarzann   
+  platform: stripchat
+  save_path: ./ctbcap_rec/Lissa_tarzann   
+  log_path: ./ctbcap_rec/log/Lissa_tarzann   
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: horny_prisha
+  platform: stripchat
+  save_path: ./ctbcap_rec/horny_prisha
+  log_path: ./ctbcap_rec/log/horny_prisha
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Dancing99priya 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Dancing99priya 
+  log_path: ./ctbcap_rec/log/Dancing99priya 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Your_Pahadan1 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Your_Pahadan1 
+  log_path: ./ctbcap_rec/log/Your_Pahadan1 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: kiarakian
+  platform: stripchat
+  save_path: ./ctbcap_rec/kiarakian
+  log_path: ./ctbcap_rec/log/kiarakian
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+
+- name: suneeta077
+  platform: stripchat
+  save_path: ./ctbcap_rec/suneeta077
+  log_path: ./ctbcap_rec/log/suneeta077
+  enabled: true
+  check_interval: 60
+  retry_interval: 60
+  cut_time: 0
+
+- name: Hot_couple61 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Hot_couple61 
+  log_path: ./ctbcap_rec/log/Hot_couple61 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+
+- name: Tina_verma01     
+  platform: stripchat
+  save_path: ./ctbcap_rec/Tina_verma01     
+  log_path: ./ctbcap_rec/log/Tina_verma01     
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: CrezyCouple 
+  platform: stripchat
+  save_path: ./ctbcap_rec/CrezyCouple 
+  log_path: ./ctbcap_rec/log/CrezyCouple 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: Nepali_Girlles69 
+  platform: stripchat
+  save_path: ./ctbcap_rec/Nepali_Girlles69 
+  log_path: ./ctbcap_rec/log/Nepali_Girlles69 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: hot_ashleel_couple18 
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot_ashleel_couple18 
+  log_path: ./ctbcap_rec/log/hot_ashleel_couple18 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: hot_ashleel_couple18 
+  platform: stripchat
+  save_path: ./ctbcap_rec/hot_ashleel_couple18 
+  log_path: ./ctbcap_rec/log/hot_ashleel_couple18 
+  enabled: true
+  check_interval: 10hot_ashleel_couple18
+  retry_interval: 10
+
