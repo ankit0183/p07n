@@ -821,3 +821,18 @@ models:
   check_interval: 10hot_ashleel_couple18
   retry_interval: 10
 
+- name: Silencesex21  
+  platform: stripchat
+  save_path: ./ctbcap_rec/Silencesex21   
+  log_path: ./ctbcap_rec/log/Silencesex21   
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
+
+- name: ursamfuck 
+  platform: stripchat
+  save_path: ./ctbcap_rec/ursamfuck 
+  log_path: ./ctbcap_rec/log/ursamfuck 
+  enabled: true
+  check_interval: 10
+  retry_interval: 10
